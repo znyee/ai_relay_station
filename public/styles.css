@@ -27,6 +27,9 @@
   --radius-sm: 16px;
   --mono: ui-monospace, "SFMono-Regular", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   --sans: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --shell-padding: 28px;
+  --top-controls-height: 49px;
+  --top-controls-gap: 18px;
 }
 
 :root[data-theme="dark"] {
@@ -120,16 +123,18 @@ button {
 .app-shell {
   position: relative;
   min-height: 100vh;
-  padding: 28px;
+  padding: var(--shell-padding);
 }
 
 .top-controls {
-  position: fixed;
-  top: 22px;
-  right: 24px;
+  position: relative;
   z-index: 20;
   display: flex;
+  justify-content: flex-end;
   gap: 8px;
+  width: 100%;
+  min-height: var(--top-controls-height);
+  margin-bottom: var(--top-controls-gap);
 }
 
 .theme-switch,
@@ -171,7 +176,7 @@ button {
 
 .boot-screen {
   display: none;
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - (var(--shell-padding) * 2) - var(--top-controls-height) - var(--top-controls-gap));
   place-items: center;
 }
 
@@ -203,7 +208,7 @@ button {
 
 .login-screen,
 .app-screen {
-  min-height: calc(100vh - 48px);
+  min-height: calc(100vh - (var(--shell-padding) * 2) - var(--top-controls-height) - var(--top-controls-gap));
 }
 
 .login-screen {
@@ -1827,13 +1832,12 @@ button:disabled {
 }
 
 @media (max-width: 900px) {
-  .app-shell {
-    padding: 16px;
+  :root {
+    --shell-padding: 16px;
   }
 
-  .top-controls {
-    top: 14px;
-    right: 16px;
+  .app-shell {
+    padding: var(--shell-padding);
   }
 
   .login-screen,
@@ -1909,10 +1913,11 @@ button:disabled {
 }
 
 @media (max-width: 640px) {
+  :root {
+    --top-controls-height: 105px;
+  }
+
   .top-controls {
-    left: 16px;
-    right: 16px;
-    width: auto;
     flex-direction: column;
   }
 
