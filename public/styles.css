@@ -1233,6 +1233,13 @@ button:disabled {
   letter-spacing: -0.02em;
 }
 
+.section-note {
+  margin: -4px 0 12px;
+  color: var(--ink-faint);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
 .admin-form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -1277,15 +1284,39 @@ button:disabled {
   accent-color: var(--accent);
 }
 
-.table-stack {
-  display: grid;
-  gap: 6px;
-}
-
 .admin-user-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.admin-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.table-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.table-toggle span {
+  text-transform: capitalize;
+}
+
+.rank-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(0, 113, 227, 0.08);
+  color: var(--accent);
+  font: 600 11px/1 var(--mono);
+  letter-spacing: 0.08em;
 }
 
 .admin-user-records {

@@ -31,6 +31,8 @@ const CHAT_MODEL_STORAGE_KEY_PREFIX = "relay.chatModel.v2.";
 const THEME_STORAGE_KEY = "relay.theme.v1";
 const JOB_POLL_INTERVAL_MS = 2000;
 const ATTACHMENT_DOWNLOAD_DEBOUNCE_MS = 1500;
+const ROUTING_PRIORITY_BASE = 1000;
+const ROUTING_PRIORITY_STEP = 10;
 
 const els = {
   appShell: document.getElementById("app-shell"),
@@ -96,7 +98,6 @@ const els = {
   adminBreakerCooldownInput: document.getElementById("admin-breaker-cooldown-input"),
   adminHistoryLimitInput: document.getElementById("admin-history-limit-input"),
   adminRoutingResetButton: document.getElementById("admin-routing-reset-button"),
-  adminAutoRoutingSaveButton: document.getElementById("admin-auto-routing-save-button"),
   adminUserRecordsSection: document.getElementById("admin-user-records-section"),
   adminUserRecordsTitle: document.getElementById("admin-user-records-title"),
   adminUserConversations: document.getElementById("admin-user-conversations"),
@@ -116,9 +117,6 @@ const els = {
   adminKeyRuleKeySelect: document.getElementById("admin-key-rule-key-select"),
   adminKeyRuleScopeSelect: document.getElementById("admin-key-rule-scope-select"),
   adminKeyRuleModelSelect: document.getElementById("admin-key-rule-model-select"),
-  adminKeyRulePriorityInput: document.getElementById("admin-key-rule-priority-input"),
-  adminKeyRuleWeightInput: document.getElementById("admin-key-rule-weight-input"),
-  adminKeyRuleEnabledInput: document.getElementById("admin-key-rule-enabled-input"),
   adminKeyRulesTable: document.getElementById("admin-key-rules-table"),
   adminDispatchTable: document.getElementById("admin-dispatch-table"),
   adminAuthTable: document.getElementById("admin-auth-table"),
@@ -918,7 +916,69 @@ function populateSelectOptions(element, options, selectedValue = "") {
   }
 }
 
-function syncAdminKeyRuleForm({ preserveValues = true } = {}) {
+function routingPriorityForIndex(index) {
+  return Math.max(1, ROUTING_PRIORITY_BASE - index * ROUTING_PRIORITY_STEP);
+}
+
+function rankLabel(index) {
+  return `#${index + 1}`;
+}
+
+function sortKeyRulesForDisplay(rules = []) {
+  return [...rules].sort((left, right) => {
+    if ((right.priority || 0) !== (left.priority || 0)) {
+      return (right.priority || 0) - (left.priority || 0);
+    }
+    if ((left.scope || "all") !== (right.scope || "all")) {
+      return (left.scope || "all").localeCompare(right.scope || "all");
+    }
+    return `${left.providerId}:${left.keyId}:${left.model || ""}`.localeCompare(
+      `${right.providerId}:${right.keyId}:${right.model || ""}`,
+    );
+  });
+}
+
+function autoRouteGroupsForDisplay() {
+  const groups = {};
+  for (const [routeType, routes] of Object.entries(state.adminOverview?.autoRouting?.routes || {})) {
+    groups[routeType] = [...(routes || [])].sort((left, right) => {
+      if ((right.priority || 0) !== (left.priority || 0)) {
+        return (right.priority || 0) - (left.priority || 0);
+      }
+      return `${left.providerLabel || left.providerId}:${left.model}`.localeCompare(
+        `${right.providerLabel || right.providerId}:${right.model}`,
+      );
+    });
+  }
+  return groups;
+}
+
+function buildRouteOverridesFromGroups(groups) {
+  return Object.entries(groups).flatMap(([routeType, routes]) =>
+    (routes || []).map((route, index) => ({
+      routeType,
+      providerId: route.providerId,
+      model: route.model,
+      enabled: route.enabled !== false,
+      priority: routingPriorityForIndex(index),
+      weight: 1,
+    })),
+  );
+}
+
+function normalizedKeyRulesFromOrderedList(rules) {
+  return (rules || []).map((rule, index) => ({
+    providerId: rule.providerId,
+    keyId: rule.keyId,
+    scope: rule.scope === "model" ? "model" : "all",
+    model: rule.scope === "model" ? String(rule.model || "") : "",
+    enabled: true,
+    priority: routingPriorityForIndex(index),
+    weight: 1,
+  }));
+}
+
+function syncAdminKeyRuleForm() {
   if (!state.me?.isAdmin) {
     return;
   }
@@ -959,16 +1019,6 @@ function syncAdminKeyRuleForm({ preserveValues = true } = {}) {
       : [{ value: "", label: "All Models" }];
   populateSelectOptions(els.adminKeyRuleModelSelect, modelOptions, els.adminKeyRuleModelSelect.value);
   els.adminKeyRuleModelSelect.disabled = scope !== "model";
-
-  if (!preserveValues || !els.adminKeyRulePriorityInput.value) {
-    els.adminKeyRulePriorityInput.value = String(selectedKey?.priority ?? 100);
-  }
-  if (!preserveValues || !els.adminKeyRuleWeightInput.value) {
-    els.adminKeyRuleWeightInput.value = String(selectedKey?.weight ?? 1);
-  }
-  if (!preserveValues) {
-    els.adminKeyRuleEnabledInput.checked = selectedKey?.enabled !== false;
-  }
 }
 
 async function saveRoutingConfig(routingConfig) {
@@ -977,17 +1027,6 @@ async function saveRoutingConfig(routingConfig) {
     body: JSON.stringify(routingConfig),
   });
   await refreshAdminOverview();
-}
-
-function collectAutoRouteOverrides() {
-  return Array.from(els.adminAutoRoutingTable.querySelectorAll("tr[data-route-type]")).map((row) => ({
-    routeType: row.dataset.routeType,
-    providerId: row.dataset.providerId,
-    model: row.dataset.model,
-    enabled: row.querySelector('[data-field="enabled"]')?.checked ?? true,
-    priority: Number(row.querySelector('[data-field="priority"]')?.value || row.dataset.priority || 100),
-    weight: Number(row.querySelector('[data-field="weight"]')?.value || row.dataset.weight || 1),
-  }));
 }
 
 function filteredAdminUsers() {
@@ -1149,17 +1188,16 @@ function renderAdminOverview() {
   els.adminUserJobsSection.classList.toggle("hidden", !isAdmin);
   els.adminUserSessionsSection.classList.toggle("hidden", !isAdmin);
   els.adminAuthSection.classList.toggle("hidden", !isAdmin);
-  els.adminAutoRoutingSaveButton.classList.toggle("hidden", !isAdmin);
 
   if (!overview) {
     els.adminSummary.innerHTML = "";
     renderTableEmptyBody(els.adminProviderUsageTable, 7, "No API usage data loaded.");
     renderTableEmptyBody(els.adminApiKeyTable, 9, "No admin data loaded.");
-    renderTableEmptyBody(els.adminAutoRoutingTable, 7, "No auto routing data loaded.");
+    renderTableEmptyBody(els.adminAutoRoutingTable, 6, "No auto routing data loaded.");
     renderTableEmptyBody(els.adminDispatchTable, 8, "No dispatch events yet.");
     if (isAdmin) {
       renderTableEmptyBody(els.adminUsersTable, 5, "No users loaded.");
-      renderTableEmptyBody(els.adminKeyRulesTable, 8, "No key rules configured.");
+      renderTableEmptyBody(els.adminKeyRulesTable, 5, "No key rules configured.");
       renderTableEmptyBody(els.adminAuthTable, 5, "No authentication audit events yet.");
       renderAdminUserRecords();
     }
@@ -1269,85 +1307,80 @@ function renderAdminOverview() {
       .join("");
   }
 
-  const autoRoutes = Object.entries(overview.autoRouting?.routes || {}).flatMap(([routeType, routes]) =>
-    (routes || []).map((route) => ({ routeType, ...route })),
-  );
-  if (!autoRoutes.length) {
-    renderTableEmptyBody(els.adminAutoRoutingTable, 7, "Auto mode is not configured.");
+  const autoRouteGroups = autoRouteGroupsForDisplay();
+  const autoRouteTypes = Object.keys(autoRouteGroups);
+  if (!autoRouteTypes.length) {
+    renderTableEmptyBody(els.adminAutoRoutingTable, 6, "Auto mode is not configured.");
   } else {
-    els.adminAutoRoutingTable.innerHTML = autoRoutes
-      .map(
-        (route) => `
-          <tr
-            data-route-type="${escapeHtml(route.routeType)}"
-            data-provider-id="${escapeHtml(route.providerId)}"
-            data-model="${escapeHtml(route.model)}"
-            data-priority="${escapeHtml(route.priority)}"
-            data-weight="${escapeHtml(route.weight)}"
-          >
-            <td>${escapeCell(route.routeType)}</td>
-            <td>${escapeCell(route.providerLabel)}</td>
-            <td>${escapeCell(route.model)}</td>
+    els.adminAutoRoutingTable.innerHTML = autoRouteTypes
+      .flatMap((routeType) => {
+        const routes = autoRouteGroups[routeType] || [];
+        return routes.map((route, index) => `
+          <tr data-route-type="${escapeHtml(routeType)}" data-route-id="${escapeHtml(route.routeId)}">
+            <td>${escapeCell(routeType)}</td>
             <td>
-              ${
-                isAdmin
-                  ? `<input class="table-checkbox" data-field="enabled" type="checkbox" ${route.enabled ? "checked" : ""} />`
-                  : escapeCell(route.enabled ? "on" : "off")
-              }
+              <strong>${escapeCell(route.providerLabel)}</strong>
+              <div class="table-subline">${escapeCell(route.model)}</div>
             </td>
             <td>
-              ${
-                isAdmin
-                  ? `<div class="table-stack"><input class="table-input" data-field="priority" type="number" value="${escapeHtml(route.priority)}" /><div class="table-subline">base ${escapeCell(route.basePriority)}</div></div>`
-                  : `${escapeCell(route.priority)}${route.basePriority !== route.priority ? `<div class="table-subline">base ${escapeCell(route.basePriority)}</div>` : ""}`
-              }
+              <label class="table-toggle">
+                <input class="table-checkbox" data-field="enabled" type="checkbox" ${route.enabled ? "checked" : ""} />
+                <span>${escapeCell(route.enabled ? "on" : "off")}</span>
+              </label>
             </td>
+            <td><span class="rank-pill">${escapeHtml(rankLabel(index))}</span></td>
             <td>
-              ${
-                isAdmin
-                  ? `<div class="table-stack"><input class="table-input" data-field="weight" type="number" min="1" value="${escapeHtml(route.weight)}" /><div class="table-subline">base ${escapeCell(route.baseWeight)}</div></div>`
-                  : `${escapeCell(route.weight)}${route.baseWeight !== route.weight ? `<div class="table-subline">base ${escapeCell(route.baseWeight)}</div>` : ""}`
-              }
+              <div class="admin-table-actions">
+                <button type="button" class="ghost-button compact-button" data-action="route-up" ${index === 0 ? "disabled" : ""}>Up</button>
+                <button type="button" class="ghost-button compact-button" data-action="route-down" ${index === routes.length - 1 ? "disabled" : ""}>Down</button>
+              </div>
             </td>
             <td>${escapeCell(route.cooldownUntil ? formatDateTime(route.cooldownUntil) : "Active")}</td>
           </tr>
-        `,
-      )
+        `);
+      })
       .join("");
   }
 
   if (isAdmin) {
     const keyIndex = new Map((overview.apiKeys || []).map((apiKey) => [apiKey.id, apiKey]));
-    const keyRules = currentRoutingConfig().keyRules || [];
+    const keyRules = sortKeyRulesForDisplay(currentRoutingConfig().keyRules || []);
     if (!keyRules.length) {
-      renderTableEmptyBody(els.adminKeyRulesTable, 8, "No key rules configured.");
+      renderTableEmptyBody(els.adminKeyRulesTable, 5, "No key preferences configured.");
     } else {
       els.adminKeyRulesTable.innerHTML = keyRules
-        .map((rule) => {
+        .map((rule, index) => {
           const apiKey = keyIndex.get(rule.keyId);
           return `
             <tr>
+              <td><span class="rank-pill">${escapeHtml(rankLabel(index))}</span></td>
               <td>${escapeCell(apiKey?.providerLabel || rule.providerId)}</td>
               <td>${escapeCell(apiKey?.keyName || rule.keyId)}</td>
-              <td>${escapeCell(rule.scope === "model" ? "one model" : "all models")}</td>
-              <td>${escapeCell(rule.model || "All")}</td>
-              <td>${escapeCell(rule.enabled ? "on" : "off")}</td>
-              <td>${escapeCell(rule.priority)}</td>
-              <td>${escapeCell(rule.weight)}</td>
               <td>
-                <button
-                  type="button"
-                  class="ghost-button compact-button danger-button"
-                  data-action="delete-rule"
-                  data-rule-id="${escapeHtml(rule.id)}"
-                >Delete</button>
+                ${
+                  rule.scope === "model"
+                    ? `<strong>${escapeCell(rule.model)}</strong><div class="table-subline">one model</div>`
+                    : `<strong>All Models</strong><div class="table-subline">provider-wide</div>`
+                }
+              </td>
+              <td>
+                <div class="admin-table-actions">
+                  <button type="button" class="ghost-button compact-button" data-action="rule-up" data-rule-id="${escapeHtml(rule.id)}" ${index === 0 ? "disabled" : ""}>Up</button>
+                  <button type="button" class="ghost-button compact-button" data-action="rule-down" data-rule-id="${escapeHtml(rule.id)}" ${index === keyRules.length - 1 ? "disabled" : ""}>Down</button>
+                  <button
+                    type="button"
+                    class="ghost-button compact-button danger-button"
+                    data-action="delete-rule"
+                    data-rule-id="${escapeHtml(rule.id)}"
+                  >Delete</button>
+                </div>
               </td>
             </tr>
           `;
         })
         .join("");
     }
-    syncAdminKeyRuleForm({ preserveValues: false });
+    syncAdminKeyRuleForm();
   }
 
   if (!overview.dispatchEvents?.length) {
@@ -1829,9 +1862,9 @@ async function saveDispatchSettings() {
   await saveRoutingConfig(routingConfig);
 }
 
-async function saveAutoRoutingOverrides() {
+async function saveAutoRoutingOverrides(groups = autoRouteGroupsForDisplay()) {
   const routingConfig = cloneRoutingConfig();
-  routingConfig.routeOverrides = collectAutoRouteOverrides();
+  routingConfig.routeOverrides = buildRouteOverridesFromGroups(groups);
   await saveRoutingConfig(routingConfig);
 }
 
@@ -1847,28 +1880,63 @@ async function saveKeyRule() {
     throw new Error("Select a model.");
   }
 
-  const routingConfig = cloneRoutingConfig();
   const nextRule = {
     providerId,
     keyId,
     scope,
     model,
-    enabled: els.adminKeyRuleEnabledInput.checked,
-    priority: Number(els.adminKeyRulePriorityInput.value || 100),
-    weight: Number(els.adminKeyRuleWeightInput.value || 1),
   };
   const ruleIdentity = `${providerId}:${keyId}:${scope}:${model || "*"}`;
-  routingConfig.keyRules = (routingConfig.keyRules || []).filter(
+  const rules = sortKeyRulesForDisplay(currentRoutingConfig().keyRules || []).filter(
     (rule) => `${rule.providerId}:${rule.keyId}:${rule.scope}:${rule.model || "*"}` !== ruleIdentity,
   );
-  routingConfig.keyRules.push(nextRule);
+  rules.unshift(nextRule);
+  const routingConfig = cloneRoutingConfig();
+  routingConfig.keyRules = normalizedKeyRulesFromOrderedList(rules);
   await saveRoutingConfig(routingConfig);
 }
 
 async function deleteKeyRule(ruleId) {
+  const rules = sortKeyRulesForDisplay(currentRoutingConfig().keyRules || []).filter((rule) => rule.id !== ruleId);
   const routingConfig = cloneRoutingConfig();
-  routingConfig.keyRules = (routingConfig.keyRules || []).filter((rule) => rule.id !== ruleId);
+  routingConfig.keyRules = normalizedKeyRulesFromOrderedList(rules);
   await saveRoutingConfig(routingConfig);
+}
+
+async function moveKeyRule(ruleId, direction) {
+  const rules = sortKeyRulesForDisplay(currentRoutingConfig().keyRules || []);
+  const index = rules.findIndex((rule) => rule.id === ruleId);
+  const nextIndex = index + direction;
+  if (index < 0 || nextIndex < 0 || nextIndex >= rules.length) {
+    return;
+  }
+  [rules[index], rules[nextIndex]] = [rules[nextIndex], rules[index]];
+  const routingConfig = cloneRoutingConfig();
+  routingConfig.keyRules = normalizedKeyRulesFromOrderedList(rules);
+  await saveRoutingConfig(routingConfig);
+}
+
+async function setAutoRouteEnabled(routeType, routeId, enabled) {
+  const groups = autoRouteGroupsForDisplay();
+  const routes = groups[routeType] || [];
+  const route = routes.find((entry) => entry.routeId === routeId);
+  if (!route) {
+    return;
+  }
+  route.enabled = Boolean(enabled);
+  await saveAutoRoutingOverrides(groups);
+}
+
+async function moveAutoRoute(routeType, routeId, direction) {
+  const groups = autoRouteGroupsForDisplay();
+  const routes = groups[routeType] || [];
+  const index = routes.findIndex((route) => route.routeId === routeId);
+  const nextIndex = index + direction;
+  if (index < 0 || nextIndex < 0 || nextIndex >= routes.length) {
+    return;
+  }
+  [routes[index], routes[nextIndex]] = [routes[nextIndex], routes[index]];
+  await saveAutoRoutingOverrides(groups);
 }
 
 els.loginForm.addEventListener("submit", async (event) => {
@@ -1928,12 +1996,6 @@ els.adminRoutingResetButton?.addEventListener("click", async () => {
   });
 });
 
-els.adminAutoRoutingSaveButton?.addEventListener("click", async () => {
-  await saveAutoRoutingOverrides().catch((error) => {
-    window.alert(error.message);
-  });
-});
-
 els.adminKeyRuleForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   await saveKeyRule().catch((error) => {
@@ -1942,25 +2004,73 @@ els.adminKeyRuleForm?.addEventListener("submit", async (event) => {
 });
 
 els.adminKeyRuleProviderSelect?.addEventListener("change", () => {
-  syncAdminKeyRuleForm({ preserveValues: false });
+  syncAdminKeyRuleForm();
 });
 
 els.adminKeyRuleKeySelect?.addEventListener("change", () => {
-  syncAdminKeyRuleForm({ preserveValues: false });
+  syncAdminKeyRuleForm();
 });
 
 els.adminKeyRuleScopeSelect?.addEventListener("change", () => {
-  syncAdminKeyRuleForm({ preserveValues: true });
+  syncAdminKeyRuleForm();
 });
 
 els.adminKeyRulesTable?.addEventListener("click", async (event) => {
-  const button = event.target.closest('button[data-action="delete-rule"]');
+  const button = event.target.closest("button[data-action]");
   if (!button) {
     return;
   }
-  await deleteKeyRule(button.dataset.ruleId).catch((error) => {
+  try {
+    if (button.dataset.action === "rule-up") {
+      await moveKeyRule(button.dataset.ruleId, -1);
+      return;
+    }
+    if (button.dataset.action === "rule-down") {
+      await moveKeyRule(button.dataset.ruleId, 1);
+      return;
+    }
+    if (button.dataset.action === "delete-rule") {
+      await deleteKeyRule(button.dataset.ruleId);
+    }
+  } catch (error) {
+    window.alert(error.message);
+  }
+});
+
+els.adminAutoRoutingTable?.addEventListener("change", async (event) => {
+  const input = event.target.closest('input[data-field="enabled"]');
+  if (!input) {
+    return;
+  }
+  const row = input.closest("tr[data-route-type][data-route-id]");
+  if (!row) {
+    return;
+  }
+  await setAutoRouteEnabled(row.dataset.routeType, row.dataset.routeId, input.checked).catch((error) => {
     window.alert(error.message);
   });
+});
+
+els.adminAutoRoutingTable?.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button) {
+    return;
+  }
+  const row = button.closest("tr[data-route-type][data-route-id]");
+  if (!row) {
+    return;
+  }
+  try {
+    if (button.dataset.action === "route-up") {
+      await moveAutoRoute(row.dataset.routeType, row.dataset.routeId, -1);
+      return;
+    }
+    if (button.dataset.action === "route-down") {
+      await moveAutoRoute(row.dataset.routeType, row.dataset.routeId, 1);
+    }
+  } catch (error) {
+    window.alert(error.message);
+  }
 });
 
 els.adminUsersTable?.addEventListener("click", async (event) => {
