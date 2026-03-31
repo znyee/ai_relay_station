@@ -15,6 +15,9 @@ export function loadConfig() {
   const uploadsRoot =
     process.env.UPLOADS_ROOT ||
     path.join(dataDir, "uploads");
+  const uploadsTempRoot =
+    process.env.UPLOADS_TEMP_ROOT ||
+    path.join(dataDir, "incoming-uploads");
   const chat = buildChatProviders(process.env);
 
   return {
@@ -26,9 +29,10 @@ export function loadConfig() {
     workspaceRoot,
     runsRoot,
     uploadsRoot,
+    uploadsTempRoot,
     port: Number(process.env.PORT || 3210),
     sessionCookieName: process.env.SESSION_COOKIE_NAME || "relay_station_session",
-    sessionSecret: process.env.APP_SESSION_SECRET || "dev-relay-station-secret",
+    sessionSecret: process.env.APP_SESSION_SECRET || "",
     sessionCookieSameSite: process.env.SESSION_COOKIE_SAME_SITE || "Strict",
     sessionCookieSecure: process.env.SESSION_COOKIE_SECURE === "1",
     chatProviders: chat.providers,
@@ -55,6 +59,10 @@ export function loadConfig() {
     authMinPasswordLength: Number(process.env.AUTH_MIN_PASSWORD_LENGTH || 6),
     authMaxFailedAttempts: Number(process.env.AUTH_MAX_FAILED_ATTEMPTS || 5),
     authLockoutMinutes: Number(process.env.AUTH_LOCKOUT_MINUTES || 15),
+    authLoginRateLimitWindowMs: Number(process.env.AUTH_LOGIN_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
+    authLoginRateLimitMaxAttempts: Number(process.env.AUTH_LOGIN_RATE_LIMIT_MAX_ATTEMPTS || 20),
+    authRegisterRateLimitWindowMs: Number(process.env.AUTH_REGISTER_RATE_LIMIT_WINDOW_MS || 30 * 60 * 1000),
+    authRegisterRateLimitMaxAttempts: Number(process.env.AUTH_REGISTER_RATE_LIMIT_MAX_ATTEMPTS || 6),
     initialRepoUrl: process.env.INITIAL_REPO_URL || "https://github.com/znyee/owner-mcq.git",
     initialRepoPath: process.env.INITIAL_REPO_PATH || "/home/ubuntu/repos/owner-mcq",
     rootAdminUsername: process.env.ROOT_ADMIN_USERNAME || "root",

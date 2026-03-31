@@ -31,7 +31,7 @@ cp .env.example .env
 
 2. Fill in:
 
-- `APP_SESSION_SECRET`
+- `APP_SESSION_SECRET` with a long random secret. Relay Station refuses to start without it.
 - `ROOT_ADMIN_PASSWORD` for the built-in `root` administrator, or let the server generate one-time credentials into `data/root-admin-password.txt`
 - at least one chat provider key, for example `DEEPSEEK_API_KEY`
 
@@ -69,6 +69,7 @@ http://127.0.0.1:3210
 - Stores conversation history in SQLite
 - Text attachments are inlined into the model request
 - Image attachments are passed as inline `image_url` content when the selected model accepts images
+- Uploaded files land in disk-backed temporary storage before Relay Station copies them into managed upload paths
 - Supports a `Gemini Web Relay` slot for OpenAI-compatible reverse proxies that front a web membership session instead of an official API key
 
 ### Authentication and admin
@@ -76,6 +77,7 @@ http://127.0.0.1:3210
 - Users can self-register from the login screen with `username + password + confirm password`
 - Passwords use scrypt hashing and must satisfy the configured minimum policy
 - Accounts are temporarily locked after repeated failed login attempts
+- Login and registration are rate-limited per client IP
 - Sessions record client IP and user agent metadata
 - All authenticated users can open the Control view and inspect API routing health, queue status, and recent dispatch activity
 - The built-in `root` administrator can additionally inspect:

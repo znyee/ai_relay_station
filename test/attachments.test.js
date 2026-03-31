@@ -59,6 +59,30 @@ test("uploaded attachments are stored and staged into ignored workspace paths", 
   assert.match(manifest, /Relay Station Attachments/);
 });
 
+test("uploaded attachments can be copied from disk-backed temp files", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-attachments-disk-"));
+  const uploadsDir = path.join(tempDir, "uploads");
+  const tempUpload = path.join(tempDir, "incoming", "notes.txt");
+  await fs.mkdir(path.dirname(tempUpload), { recursive: true });
+  await fs.writeFile(tempUpload, "hello-from-disk", "utf8");
+
+  const attachments = await storeUploadedAttachments({
+    rootDir: uploadsDir,
+    files: [
+      {
+        originalname: "notes.txt",
+        mimetype: "text/plain",
+        size: 15,
+        path: tempUpload,
+      },
+    ],
+  });
+
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0].name, "notes.txt");
+  assert.equal(await fs.readFile(attachments[0].diskPath, "utf8"), "hello-from-disk");
+});
+
 test("generated text and copied file attachments keep labels and become downloadable artifacts", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-attachments-"));
   const uploadsDir = path.join(tempDir, "outputs");

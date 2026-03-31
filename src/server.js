@@ -3,6 +3,7 @@ import path from "node:path";
 import express from "express";
 import multer from "multer";
 import {
+  sanitizeAttachmentName,
   storeTextAttachments,
   serializeAttachmentForClient,
   storeUploadedAttachments,
@@ -25,10 +26,18 @@ import { createJobQueue } from "./job-queue.js";
 import { buildChatGeneratedFiles } from "./generated-files.js";
 
 const config = loadConfig();
+const sessionSecret = String(config.sessionSecret || "").trim();
+if (!sessionSecret) {
+  throw new Error("APP_SESSION_SECRET is required.");
+}
+if (sessionSecret.length < 16) {
+  console.warn("Warning: APP_SESSION_SECRET is shorter than 16 characters. Use a long random secret.");
+}
 await ensureDir(config.dataDir);
 await ensureDir(config.workspaceRoot);
 await ensureDir(config.runsRoot);
 await ensureDir(config.uploadsRoot);
+await ensureDir(config.uploadsTempRoot);
 const ROUTING_CONFIG_SETTING_KEY = "routing_config";
 
 const db = createDatabase(config.databasePath);
@@ -40,13 +49,25 @@ if (savedRoutingConfig) {
 const jobQueue = createJobQueue({ config, db });
 db.failRunningJobs("Relay Station restarted before the job finished.");
 const attachmentDownloadState = new Map();
+const authRateLimitState = {
+  login: new Map(),
+  register: new Map(),
+};
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 app.use(express.static(config.publicDir));
 
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => {
+      callback(null, config.uploadsTempRoot);
+    },
+    filename: (_req, file, callback) => {
+      const safeName = sanitizeAttachmentName(file.originalname || file.fieldname || "file");
+      callback(null, `${Date.now()}-${randomId("upl_")}-${safeName}`);
+    },
+  }),
   limits: {
     files: config.maxUploadFiles,
     fileSize: config.maxUploadBytes,
@@ -57,12 +78,24 @@ function jsonError(res, status, message) {
   res.status(status).json({ error: message });
 }
 
+async function cleanupUploadedFiles(files) {
+  const uploadedFiles = Array.isArray(files) ? files : [];
+  await Promise.all(
+    uploadedFiles
+      .map((file) => String(file?.path || "").trim())
+      .filter(Boolean)
+      .map((filePath) => fs.rm(filePath, { force: true }).catch(() => {})),
+  );
+}
+
 function attachmentUploadMiddleware(req, res, next) {
   upload.array("attachments", config.maxUploadFiles)(req, res, (error) => {
     if (!error) {
       next();
       return;
     }
+
+    cleanupUploadedFiles(req.files).catch(() => {});
 
     if (error instanceof multer.MulterError) {
       if (error.code === "LIMIT_FILE_SIZE") {
@@ -79,6 +112,47 @@ function attachmentUploadMiddleware(req, res, next) {
 
     next(error);
   });
+}
+
+function authRateLimitConfig(kind) {
+  if (kind === "register") {
+    return {
+      windowMs: Math.max(1_000, Number(config.authRegisterRateLimitWindowMs || 0)),
+      maxAttempts: Math.max(1, Number(config.authRegisterRateLimitMaxAttempts || 1)),
+    };
+  }
+
+  return {
+    windowMs: Math.max(1_000, Number(config.authLoginRateLimitWindowMs || 0)),
+    maxAttempts: Math.max(1, Number(config.authLoginRateLimitMaxAttempts || 1)),
+  };
+}
+
+function consumeAuthRateLimit(kind, ipAddress) {
+  const key = String(ipAddress || "").trim() || "unknown";
+  const bucket = authRateLimitState[kind];
+  const { windowMs, maxAttempts } = authRateLimitConfig(kind);
+  const now = Date.now();
+  const current = bucket.get(key);
+
+  if (!current || current.resetAt <= now) {
+    bucket.set(key, {
+      count: 1,
+      resetAt: now + windowMs,
+    });
+    return null;
+  }
+
+  if (current.count >= maxAttempts) {
+    return {
+      retryAfterMs: Math.max(0, current.resetAt - now),
+      remaining: 0,
+    };
+  }
+
+  current.count += 1;
+  bucket.set(key, current);
+  return null;
 }
 
 function sessionCookieOptions(ttlHours) {
@@ -164,6 +238,27 @@ function clientIp(req) {
     return forwarded.split(",")[0].trim();
   }
   return req.socket?.remoteAddress || "";
+}
+
+function rejectRateLimitedAuthRequest(req, res, kind, username = "") {
+  const ipAddress = clientIp(req);
+  const userAgent = String(req.headers["user-agent"] || "");
+  const limited = consumeAuthRateLimit(kind, ipAddress);
+  if (!limited) {
+    return false;
+  }
+
+  res.setHeader("Retry-After", String(Math.max(1, Math.ceil(limited.retryAfterMs / 1000))));
+  db.recordAuthEvent({
+    userId: "",
+    username,
+    eventType: `${kind}_rate_limited`,
+    reason: `ip:${ipAddress}`,
+    ipAddress,
+    userAgent,
+  });
+  jsonError(res, 429, `Too many ${kind} attempts. Please try again later.`);
+  return true;
 }
 
 function passwordPolicyError(password) {
@@ -538,6 +633,9 @@ app.post("/api/auth/register", async (req, res) => {
   const username = normalizeUsername(req.body?.username);
   const password = String(req.body?.password || "");
   const displayName = username;
+  if (rejectRateLimitedAuthRequest(req, res, "register", username)) {
+    return;
+  }
   const ipAddress = clientIp(req);
   const userAgent = String(req.headers["user-agent"] || "");
 
@@ -588,6 +686,9 @@ app.post("/api/auth/register", async (req, res) => {
 app.post("/api/auth/login", async (req, res) => {
   const username = normalizeUsername(req.body?.username);
   const password = String(req.body?.password || "");
+  if (rejectRateLimitedAuthRequest(req, res, "login", username)) {
+    return;
+  }
   const ipAddress = clientIp(req);
   const userAgent = String(req.headers["user-agent"] || "");
   const user = db.getUserByUsername(username);
@@ -926,178 +1027,186 @@ app.get("/api/chat/conversations/:conversationId/messages", requireAuth, async (
 });
 
 app.post("/api/chat/conversations/:conversationId/messages", requireAuth, attachmentUploadMiddleware, async (req, res) => {
-  const conversation = db.getConversation(req.user.id, req.params.conversationId);
-  if (!conversation) {
-    return jsonError(res, 404, "Conversation not found.");
-  }
-
-  const files = Array.isArray(req.files) ? req.files : [];
-  const content = normalizeRequestText(req.body?.content);
-  const requestedProviderId = String(req.body?.providerId || "").trim();
-  const requestedModel = String(req.body?.model || "").trim();
-  if (!content && files.length === 0) {
-    return jsonError(res, 400, "Add a message or at least one attachment.");
-  }
-
-  const messageId = randomId("msg_");
-  const attachments = await saveAttachmentsForMessage({
-    user: req.user,
-    conversationId: conversation.id,
-    messageId,
-    files,
-  });
-
-  db.addMessage({
-    id: messageId,
-    conversationId: conversation.id,
-    role: "user",
-    content,
-    model: requestedModel,
-    attachments,
-  });
-
-  const history = db.listMessages(conversation.id);
-  if (history.filter((entry) => entry.role === "user").length === 1) {
-    db.maybeRetitleConversation(conversation.id, messageTitleSeed(content, attachments));
-  }
-
   try {
-    const reply = await chatService.respond({
+    const conversation = db.getConversation(req.user.id, req.params.conversationId);
+    if (!conversation) {
+      return jsonError(res, 404, "Conversation not found.");
+    }
+
+    const files = Array.isArray(req.files) ? req.files : [];
+    const content = normalizeRequestText(req.body?.content);
+    const requestedProviderId = String(req.body?.providerId || "").trim();
+    const requestedModel = String(req.body?.model || "").trim();
+    if (!content && files.length === 0) {
+      return jsonError(res, 400, "Add a message or at least one attachment.");
+    }
+
+    const messageId = randomId("msg_");
+    const attachments = await saveAttachmentsForMessage({
       user: req.user,
-      history,
-      providerId: requestedProviderId,
+      conversationId: conversation.id,
+      messageId,
+      files,
+    });
+
+    db.addMessage({
+      id: messageId,
+      conversationId: conversation.id,
+      role: "user",
+      content,
       model: requestedModel,
-      conversationId: conversation.id,
+      attachments,
     });
 
-    const assistantMessageId = randomId("msg_");
-    const assistantAttachments = await saveGeneratedChatAttachments({
-      user: req.user,
-      conversationId: conversation.id,
-      messageId: assistantMessageId,
-      content: reply.text,
-    });
+    const history = db.listMessages(conversation.id);
+    if (history.filter((entry) => entry.role === "user").length === 1) {
+      db.maybeRetitleConversation(conversation.id, messageTitleSeed(content, attachments));
+    }
 
-    const assistantMessage = db.addMessage({
-      id: assistantMessageId,
-      conversationId: conversation.id,
-      role: "assistant",
-      content: reply.text,
-      model: reply.model,
-      attachments: assistantAttachments,
-    });
+    try {
+      const reply = await chatService.respond({
+        user: req.user,
+        history,
+        providerId: requestedProviderId,
+        model: requestedModel,
+        conversationId: conversation.id,
+      });
 
-    return res.status(201).json({
-      message: {
-        ...messagePayload(assistantMessage),
-        providerId: reply.providerId,
-        providerLabel: reply.providerLabel,
-      },
-      conversation: conversationPayload(db.getConversation(req.user.id, conversation.id)),
-    });
-  } catch (error) {
-    return jsonError(res, 500, error instanceof Error ? error.message : "Chat request failed.");
+      const assistantMessageId = randomId("msg_");
+      const assistantAttachments = await saveGeneratedChatAttachments({
+        user: req.user,
+        conversationId: conversation.id,
+        messageId: assistantMessageId,
+        content: reply.text,
+      });
+
+      const assistantMessage = db.addMessage({
+        id: assistantMessageId,
+        conversationId: conversation.id,
+        role: "assistant",
+        content: reply.text,
+        model: reply.model,
+        attachments: assistantAttachments,
+      });
+
+      return res.status(201).json({
+        message: {
+          ...messagePayload(assistantMessage),
+          providerId: reply.providerId,
+          providerLabel: reply.providerLabel,
+        },
+        conversation: conversationPayload(db.getConversation(req.user.id, conversation.id)),
+      });
+    } catch (error) {
+      return jsonError(res, 500, error instanceof Error ? error.message : "Chat request failed.");
+    }
+  } finally {
+    await cleanupUploadedFiles(req.files);
   }
 });
 
 app.post("/api/chat/conversations/:conversationId/messages/stream", requireAuth, attachmentUploadMiddleware, async (req, res) => {
-  const conversation = db.getConversation(req.user.id, req.params.conversationId);
-  if (!conversation) {
-    return jsonError(res, 404, "Conversation not found.");
-  }
-
-  const files = Array.isArray(req.files) ? req.files : [];
-  const content = normalizeRequestText(req.body?.content);
-  const requestedProviderId = String(req.body?.providerId || "").trim();
-  const requestedModel = String(req.body?.model || "").trim();
-  if (!content && files.length === 0) {
-    return jsonError(res, 400, "Add a message or at least one attachment.");
-  }
-
-  const userMessageId = randomId("msg_");
-  const userAttachments = await saveAttachmentsForMessage({
-    user: req.user,
-    conversationId: conversation.id,
-    messageId: userMessageId,
-    files,
-  });
-
-  db.addMessage({
-    id: userMessageId,
-    conversationId: conversation.id,
-    role: "user",
-    content,
-    model: requestedModel,
-    attachments: userAttachments,
-  });
-
-  const history = db.listMessages(conversation.id);
-  if (history.filter((entry) => entry.role === "user").length === 1) {
-    db.maybeRetitleConversation(conversation.id, messageTitleSeed(content, userAttachments));
-  }
-
-  res.status(200);
-  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders?.();
-
   try {
-    const reply = await chatService.streamRespond({
+    const conversation = db.getConversation(req.user.id, req.params.conversationId);
+    if (!conversation) {
+      return jsonError(res, 404, "Conversation not found.");
+    }
+
+    const files = Array.isArray(req.files) ? req.files : [];
+    const content = normalizeRequestText(req.body?.content);
+    const requestedProviderId = String(req.body?.providerId || "").trim();
+    const requestedModel = String(req.body?.model || "").trim();
+    if (!content && files.length === 0) {
+      return jsonError(res, 400, "Add a message or at least one attachment.");
+    }
+
+    const userMessageId = randomId("msg_");
+    const userAttachments = await saveAttachmentsForMessage({
       user: req.user,
-      history,
-      providerId: requestedProviderId,
+      conversationId: conversation.id,
+      messageId: userMessageId,
+      files,
+    });
+
+    db.addMessage({
+      id: userMessageId,
+      conversationId: conversation.id,
+      role: "user",
+      content,
       model: requestedModel,
-      conversationId: conversation.id,
-      onStart(meta) {
-        writeJsonLine(res, {
-          type: "meta",
-          ...meta,
+      attachments: userAttachments,
+    });
+
+    const history = db.listMessages(conversation.id);
+    if (history.filter((entry) => entry.role === "user").length === 1) {
+      db.maybeRetitleConversation(conversation.id, messageTitleSeed(content, userAttachments));
+    }
+
+    res.status(200);
+    res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    try {
+      const reply = await chatService.streamRespond({
+        user: req.user,
+        history,
+        providerId: requestedProviderId,
+        model: requestedModel,
+        conversationId: conversation.id,
+        onStart(meta) {
+          writeJsonLine(res, {
+            type: "meta",
+            ...meta,
+          });
+        },
+        onDelta(delta, text) {
+          writeJsonLine(res, {
+            type: "delta",
+            delta,
+            text,
+          });
+        },
         });
-      },
-      onDelta(delta, text) {
-        writeJsonLine(res, {
-          type: "delta",
-          delta,
-          text,
-        });
-      },
-    });
 
-    const assistantMessageId = randomId("msg_");
-    const assistantAttachments = await saveGeneratedChatAttachments({
-      user: req.user,
-      conversationId: conversation.id,
-      messageId: assistantMessageId,
-      content: reply.text,
-    });
+      const assistantMessageId = randomId("msg_");
+      const assistantAttachments = await saveGeneratedChatAttachments({
+        user: req.user,
+        conversationId: conversation.id,
+        messageId: assistantMessageId,
+        content: reply.text,
+      });
 
-    const assistantMessage = db.addMessage({
-      id: assistantMessageId,
-      conversationId: conversation.id,
-      role: "assistant",
-      content: reply.text,
-      model: reply.model,
-      attachments: assistantAttachments,
-    });
+      const assistantMessage = db.addMessage({
+        id: assistantMessageId,
+        conversationId: conversation.id,
+        role: "assistant",
+        content: reply.text,
+        model: reply.model,
+        attachments: assistantAttachments,
+      });
 
-    writeJsonLine(res, {
-      type: "done",
-      message: {
-        ...messagePayload(assistantMessage),
-        providerId: reply.providerId,
-        providerLabel: reply.providerLabel,
-      },
-      conversation: conversationPayload(db.getConversation(req.user.id, conversation.id)),
-    });
-  } catch (error) {
-    writeJsonLine(res, {
-      type: "error",
-      error: error instanceof Error ? error.message : "Chat request failed.",
-    });
+      writeJsonLine(res, {
+        type: "done",
+        message: {
+          ...messagePayload(assistantMessage),
+          providerId: reply.providerId,
+          providerLabel: reply.providerLabel,
+        },
+        conversation: conversationPayload(db.getConversation(req.user.id, conversation.id)),
+      });
+    } catch (error) {
+      writeJsonLine(res, {
+        type: "error",
+        error: error instanceof Error ? error.message : "Chat request failed.",
+      });
+    }
+
+    return res.end();
+  } finally {
+    await cleanupUploadedFiles(req.files);
   }
-
-  return res.end();
 });
 
 app.get(
@@ -1132,26 +1241,30 @@ app.get("/api/code/jobs", requireCodeAccess, async (req, res) => {
 });
 
 app.post("/api/code/jobs", requireCodeAccess, attachmentUploadMiddleware, async (req, res) => {
-  const files = Array.isArray(req.files) ? req.files : [];
-  const rawPrompt = normalizeRequestText(req.body?.prompt);
-  if (!rawPrompt && files.length === 0) {
-    return jsonError(res, 400, "Add a task description or at least one attachment.");
-  }
+  try {
+    const files = Array.isArray(req.files) ? req.files : [];
+    const rawPrompt = normalizeRequestText(req.body?.prompt);
+    if (!rawPrompt && files.length === 0) {
+      return jsonError(res, 400, "Add a task description or at least one attachment.");
+    }
 
-  const prompt =
-    rawPrompt ||
-    `Use the uploaded attachments as the primary task input.\nAttachments: ${files.map((file) => file.originalname || "file").join(", ")}`;
-  const jobId = randomId("job_");
-  const attachments = await saveAttachmentsForJob({
-    user: req.user,
-    jobId,
-    files,
-  });
-  const job = db.createJob(req.user.id, prompt, attachments, jobId);
-  jobQueue.schedule();
-  res.status(201).json({
-    job: jobPayload(job),
-  });
+    const prompt =
+      rawPrompt ||
+      `Use the uploaded attachments as the primary task input.\nAttachments: ${files.map((file) => file.originalname || "file").join(", ")}`;
+    const jobId = randomId("job_");
+    const attachments = await saveAttachmentsForJob({
+      user: req.user,
+      jobId,
+      files,
+    });
+    const job = db.createJob(req.user.id, prompt, attachments, jobId);
+    jobQueue.schedule();
+    res.status(201).json({
+      job: jobPayload(job),
+    });
+  } finally {
+    await cleanupUploadedFiles(req.files);
+  }
 });
 
 app.get("/api/code/jobs/:jobId", requireCodeAccess, async (req, res) => {

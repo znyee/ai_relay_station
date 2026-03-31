@@ -145,14 +145,19 @@ export async function storeUploadedAttachments({ files, rootDir }) {
     const name = sanitizeAttachmentName(file.originalname || file.fieldname || `file-${index + 1}`);
     const storedName = `${String(index + 1).padStart(2, "0")}-${name}`;
     const diskPath = joinPath(rootDir, storedName);
-    await fs.writeFile(diskPath, file.buffer);
+    if (file.path) {
+      await fs.copyFile(file.path, diskPath);
+    } else {
+      await fs.writeFile(diskPath, file.buffer);
+    }
+    const stat = await fs.stat(diskPath);
     attachments.push({
       id,
       name,
       storedName,
       diskPath,
       mimeType: String(file.mimetype || "application/octet-stream"),
-      size: Number(file.size || file.buffer.length || 0),
+      size: Number(file.size || stat.size || file.buffer?.length || 0),
       kind: classifyAttachment({ mimeType: file.mimetype, name }),
     });
   }

@@ -87,6 +87,15 @@ function sessionCookie(response) {
   return String(response.headers.get("set-cookie") || "").split(";")[0];
 }
 
+test("server requires APP_SESSION_SECRET", async () => {
+  await assert.rejects(
+    startServer({
+      APP_SESSION_SECRET: "",
+    }),
+    /APP_SESSION_SECRET is required/,
+  );
+});
+
 test("registration accepts simple passwords and exposes the control overview to regular users", async (t) => {
   const server = await startServer();
   t.after(async () => {
@@ -152,6 +161,85 @@ test("registration accepts simple passwords and exposes the control overview to 
     }),
   });
   assert.equal(updateRoutingResponse.status, 403);
+});
+
+test("registration is rate limited per client ip", async (t) => {
+  const server = await startServer({
+    AUTH_REGISTER_RATE_LIMIT_MAX_ATTEMPTS: "2",
+    AUTH_REGISTER_RATE_LIMIT_WINDOW_MS: "60000",
+  });
+  t.after(async () => {
+    await stopServer(server.child);
+  });
+
+  for (const username of ["rate-a", "rate-b"]) {
+    const response = await fetch(`${server.baseUrl}/api/auth/register`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-forwarded-for": "203.0.113.10",
+      },
+      body: JSON.stringify({
+        username,
+        password: "123456",
+      }),
+    });
+    assert.equal(response.status, 201);
+  }
+
+  const limitedResponse = await fetch(`${server.baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-forwarded-for": "203.0.113.10",
+    },
+    body: JSON.stringify({
+      username: "rate-c",
+      password: "123456",
+    }),
+  });
+  assert.equal(limitedResponse.status, 429);
+  assert.match(String(limitedResponse.headers.get("retry-after") || ""), /^\d+$/);
+});
+
+test("login is rate limited per client ip before account lockout", async (t) => {
+  const server = await startServer({
+    AUTH_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: "2",
+    AUTH_LOGIN_RATE_LIMIT_WINDOW_MS: "60000",
+    AUTH_MAX_FAILED_ATTEMPTS: "50",
+  });
+  t.after(async () => {
+    await stopServer(server.child);
+  });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch(`${server.baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-forwarded-for": "203.0.113.20",
+      },
+      body: JSON.stringify({
+        username: "root",
+        password: "wrong-password",
+      }),
+    });
+    assert.equal(response.status, 401);
+  }
+
+  const limitedResponse = await fetch(`${server.baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-forwarded-for": "203.0.113.20",
+    },
+    body: JSON.stringify({
+      username: "root",
+      password: "wrong-password",
+    }),
+  });
+  assert.equal(limitedResponse.status, 429);
+  assert.match(String(limitedResponse.headers.get("retry-after") || ""), /^\d+$/);
 });
 
 test("root can manage users and inspect their conversation history", async (t) => {
