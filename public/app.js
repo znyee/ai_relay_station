@@ -30,6 +30,7 @@ const CHAT_PROVIDER_STORAGE_KEY = "relay.chatProviderId.v2";
 const CHAT_MODEL_STORAGE_KEY_PREFIX = "relay.chatModel.v2.";
 const THEME_STORAGE_KEY = "relay.theme.v1";
 const JOB_POLL_INTERVAL_MS = 4000;
+const IDLE_JOB_POLL_INTERVAL_MS = 15000;
 const ADMIN_POLL_INTERVAL_MS = 12000;
 const ATTACHMENT_DOWNLOAD_DEBOUNCE_MS = 1500;
 const ROUTING_PRIORITY_BASE = 1000;
@@ -138,6 +139,7 @@ const els = {
 let jobsRefreshInFlight = false;
 let adminOverviewRefreshPromise = null;
 let messageRenderFrame = 0;
+let messageRenderPatchLastOnly = false;
 let jobsPollTimer = 0;
 let adminPollTimer = 0;
 const attachmentDownloads = new Map();
@@ -435,7 +437,7 @@ function clearPollTimers() {
   }
 }
 
-function scheduleJobsPoll(delay = JOB_POLL_INTERVAL_MS) {
+function scheduleJobsPoll(delay = hasActiveJobActivity() ? JOB_POLL_INTERVAL_MS : IDLE_JOB_POLL_INTERVAL_MS) {
   if (jobsPollTimer) {
     window.clearTimeout(jobsPollTimer);
     jobsPollTimer = 0;
@@ -592,13 +594,16 @@ async function apiStream(path, options = {}, onEvent) {
   }
 }
 
-function scheduleMessagesRender() {
+function scheduleMessagesRender({ patchLastOnly = true } = {}) {
+  messageRenderPatchLastOnly = messageRenderPatchLastOnly || patchLastOnly;
   if (messageRenderFrame) {
     return;
   }
   messageRenderFrame = window.requestAnimationFrame(() => {
+    const shouldPatchLastOnly = messageRenderPatchLastOnly;
     messageRenderFrame = 0;
-    renderMessages();
+    messageRenderPatchLastOnly = false;
+    renderMessages({ patchLastOnly: shouldPatchLastOnly });
   });
 }
 
@@ -917,7 +922,83 @@ function renderMessageBody(message) {
   return `<div class="message-body plain">${escapeHtml(content)}</div>`;
 }
 
-function renderMessages() {
+function messageMetaText(message) {
+  return [
+    message.providerLabel || "",
+    message.isStreaming ? "Streaming" : "",
+    message.isError ? "Failed" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function applyMessageNode(node, message) {
+  node.dataset.messageId = message.id || "";
+  node.className = `message ${message.role}`;
+  if (message.isStreaming) {
+    node.classList.add("streaming");
+  }
+  if (message.isError) {
+    node.classList.add("error");
+  }
+  const content = message.content || (message.isStreaming ? "Thinking…" : "");
+  const meta = messageMetaText(message);
+  const visibleAttachments = visibleMessageAttachments(message);
+  node.innerHTML = `
+    ${renderMessageBody({ ...message, content })}
+    ${meta ? `<div class="message-meta">${escapeHtml(meta)}</div>` : ""}
+    ${attachmentMarkup(visibleAttachments, "message")}
+  `;
+  enhanceMarkdownBlocks(node);
+}
+
+function renderMessageNode(message) {
+  const node = document.createElement("article");
+  applyMessageNode(node, message);
+  return node;
+}
+
+function shouldStickMessagesToBottom() {
+  const remaining = els.chatMessages.scrollHeight - els.chatMessages.scrollTop - els.chatMessages.clientHeight;
+  return remaining < 64;
+}
+
+function patchLastMessage() {
+  if (state.messages.length === 0) {
+    renderMessages();
+    return;
+  }
+
+  if (
+    els.chatMessages.classList.contains("empty-state") ||
+    els.chatMessages.children.length !== state.messages.length
+  ) {
+    renderMessages();
+    return;
+  }
+
+  const lastMessage = state.messages[state.messages.length - 1];
+  const node = els.chatMessages.lastElementChild;
+  if (!node || node.dataset.messageId !== (lastMessage.id || "")) {
+    renderMessages();
+    return;
+  }
+
+  const stickToBottom = shouldStickMessagesToBottom() || Boolean(lastMessage.isStreaming);
+  applyMessageNode(node, lastMessage);
+  renderConversationActions();
+  if (stickToBottom) {
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+  }
+}
+
+function renderMessages(options = {}) {
+  const patchLastOnly = options.patchLastOnly === true;
+  if (patchLastOnly) {
+    patchLastMessage();
+    return;
+  }
+
   els.chatMessages.innerHTML = "";
   if (state.messages.length === 0) {
     els.chatMessages.className = "message-stream empty-state";
@@ -928,28 +1009,7 @@ function renderMessages() {
 
   els.chatMessages.className = "message-stream";
   for (const message of state.messages) {
-    const node = document.createElement("article");
-    node.className = `message ${message.role}`;
-    if (message.isStreaming) {
-      node.classList.add("streaming");
-    }
-    if (message.isError) {
-      node.classList.add("error");
-    }
-    const content = message.content || (message.isStreaming ? "Thinking…" : "");
-    const meta = [
-      message.providerLabel || "",
-      message.isStreaming ? "Streaming" : "",
-      message.isError ? "Failed" : "",
-    ].filter(Boolean).join(" · ");
-    const visibleAttachments = visibleMessageAttachments(message);
-    node.innerHTML = `
-      ${renderMessageBody({ ...message, content })}
-      ${meta ? `<div class="message-meta">${escapeHtml(meta)}</div>` : ""}
-      ${attachmentMarkup(visibleAttachments, "message")}
-    `;
-    enhanceMarkdownBlocks(node);
-    els.chatMessages.append(node);
+    els.chatMessages.append(renderMessageNode(message));
   }
   renderConversationActions();
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
@@ -975,6 +1035,10 @@ function jobTitle(job) {
     return `Attachments: ${job.attachments[0].name}${job.attachments.length > 1 ? "…" : ""}`;
   }
   return "Untitled job";
+}
+
+function findJobById(jobId) {
+  return state.jobs.find((job) => job.id === jobId) || null;
 }
 
 function renderJobs() {
@@ -1813,6 +1877,7 @@ async function sendChatMessage(content, attachments) {
 
         if (event.type === "done") {
           placeholderMessage.isStreaming = false;
+          scheduleMessagesRender();
         }
       },
     );
@@ -1820,7 +1885,7 @@ async function sendChatMessage(content, attachments) {
     placeholderMessage.isStreaming = false;
     placeholderMessage.isError = true;
     placeholderMessage.content = placeholderMessage.content || error.message;
-    renderMessages();
+    renderMessages({ patchLastOnly: true });
     setChatRequestPending(false);
     throw error;
   }
@@ -1861,7 +1926,16 @@ async function refreshJobs() {
     }
     renderJobs();
     if (state.selectedJobId) {
-      await selectJob(state.selectedJobId);
+      state.selectedJob = findJobById(state.selectedJobId);
+      if (!state.selectedJob) {
+        state.selectedJobLogText = "";
+        renderJobDetail();
+      } else if (state.selectedJob.status === "pending" || state.selectedJob.status === "running") {
+        await loadJobLog(state.selectedJob.id);
+      } else {
+        state.selectedJobLogText = "";
+        renderJobDetail();
+      }
     } else {
       state.selectedJob = null;
       state.selectedJobLogText = "";
@@ -1875,15 +1949,18 @@ async function refreshJobs() {
 
 async function selectJob(jobId) {
   state.selectedJobId = jobId;
+  state.selectedJob = findJobById(jobId);
   renderJobs();
-  const payload = await api(`/api/code/jobs/${jobId}`);
-  state.selectedJob = payload.job;
-  if (payload.job.status === "pending" || payload.job.status === "running") {
+  if (!state.selectedJob) {
+    const payload = await api(`/api/code/jobs/${jobId}`);
+    state.selectedJob = payload.job;
+  }
+  if (state.selectedJob.status === "pending" || state.selectedJob.status === "running") {
     await loadJobLog(jobId);
   } else {
     state.selectedJobLogText = "";
+    renderJobDetail();
   }
-  renderJobDetail();
 }
 
 async function loadJobLog(jobId) {
