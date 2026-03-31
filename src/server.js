@@ -674,7 +674,7 @@ app.post("/api/auth/register", async (req, res) => {
   const defaults = defaultChatSelection();
   const user = db.createUser({
     username,
-    passwordHash: hashPassword(password),
+    passwordHash: await hashPassword(password),
     displayName,
     repoUrl: "",
     repoLocalPath: "",
@@ -725,7 +725,7 @@ app.post("/api/auth/login", async (req, res) => {
     return jsonError(res, 423, `Account temporarily locked until ${new Date(user.locked_until).toLocaleString()}.`);
   }
 
-  if (!user || !verifyPassword(password, user.password_hash)) {
+  if (!user || !(await verifyPassword(password, user.password_hash))) {
     if (user) {
       const nextAttempts = Number(user.failedLoginAttempts || 0) + 1;
       const lockedUntil =
@@ -901,7 +901,7 @@ app.patch("/api/admin/users/:userId", requireAdmin, async (req, res) => {
 
   const updated = db.updateUser({
     id: target.id,
-    passwordHash: nextPassword !== null ? hashPassword(nextPassword) : null,
+    passwordHash: nextPassword !== null ? await hashPassword(nextPassword) : null,
     displayName: nextDisplayName,
     repoUrl: nextRepoUrl,
     repoLocalPath: nextRepoLocalPath,
@@ -1447,8 +1447,8 @@ async function ensureRootAdminUser() {
       needsUpdate = true;
     }
 
-    if (configuredRootPassword && !verifyPassword(configuredRootPassword, existing.password_hash)) {
-      updateInput.passwordHash = hashPassword(configuredRootPassword);
+    if (configuredRootPassword && !(await verifyPassword(configuredRootPassword, existing.password_hash))) {
+      updateInput.passwordHash = await hashPassword(configuredRootPassword);
       needsUpdate = true;
       passwordChanged = true;
     }
@@ -1488,7 +1488,7 @@ async function ensureRootAdminUser() {
 
   db.createUser({
     username: config.rootAdminUsername,
-    passwordHash: hashPassword(rootPassword),
+    passwordHash: await hashPassword(rootPassword),
     displayName: config.rootAdminDisplayName,
     repoUrl: config.rootAdminRepoUrl,
     repoLocalPath: config.rootAdminRepoPath,
@@ -1520,7 +1520,7 @@ async function maybeBootstrapDefaultUser() {
   const bootstrapProvider = defaultChatSelection();
   db.createUser({
     username: bootstrapUsername,
-    passwordHash: hashPassword(bootstrapPassword),
+    passwordHash: await hashPassword(bootstrapPassword),
     displayName: process.env.BOOTSTRAP_DISPLAY_NAME || "Owner",
     repoUrl: process.env.BOOTSTRAP_REPO_URL || "",
     repoLocalPath: process.env.BOOTSTRAP_REPO_PATH || "",

@@ -1,22 +1,38 @@
 import crypto from "node:crypto";
+import { promisify } from "node:util";
 import { base64Url, fromBase64Url, nowIso } from "./utils.js";
 
 const SCRYPT_KEYLEN = 64;
+const scryptAsync = promisify(crypto.scrypt);
 
-export function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const derived = crypto.scryptSync(password, salt, SCRYPT_KEYLEN).toString("hex");
-  return `${salt}:${derived}`;
+async function derivePasswordKey(password, salt) {
+  const derived = await scryptAsync(String(password || ""), salt, SCRYPT_KEYLEN);
+  return Buffer.isBuffer(derived) ? derived : Buffer.from(derived);
 }
 
-export function verifyPassword(password, hash) {
+export async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derived = await derivePasswordKey(password, salt);
+  return `${salt}:${derived.toString("hex")}`;
+}
+
+export async function verifyPassword(password, hash) {
   const [salt, expected] = String(hash || "").split(":");
   if (!salt || !expected) {
     return false;
   }
 
-  const actual = crypto.scryptSync(password, salt, SCRYPT_KEYLEN).toString("hex");
-  return crypto.timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(expected, "hex"));
+  const expectedBuffer = Buffer.from(expected, "hex");
+  if (expectedBuffer.length !== SCRYPT_KEYLEN) {
+    return false;
+  }
+
+  const actualBuffer = await derivePasswordKey(password, salt);
+  if (actualBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 export function validatePasswordStrength(password, options = {}) {

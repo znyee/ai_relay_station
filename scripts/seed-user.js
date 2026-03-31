@@ -53,7 +53,7 @@ const existing = db.getUserByUsername(username);
 if (existing) {
   db.updateUser({
     id: existing.id,
-    passwordHash: hashPassword(password),
+    passwordHash: await hashPassword(password),
     displayName,
     repoUrl,
     repoLocalPath: repoPath,
@@ -68,7 +68,7 @@ if (existing) {
   const defaults = defaultChatSelection();
   db.createUser({
     username,
-    passwordHash: hashPassword(password),
+    passwordHash: await hashPassword(password),
     displayName,
     repoUrl,
     repoLocalPath: repoPath,

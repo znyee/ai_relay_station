@@ -8,10 +8,10 @@ import {
   verifySessionCookie,
 } from "../src/security.js";
 
-test("password hashing verifies correctly", () => {
-  const hash = hashPassword("secret-123");
-  assert.equal(verifyPassword("secret-123", hash), true);
-  assert.equal(verifyPassword("wrong", hash), false);
+test("password hashing verifies correctly", async () => {
+  const hash = await hashPassword("secret-123");
+  assert.equal(await verifyPassword("secret-123", hash), true);
+  assert.equal(await verifyPassword("wrong", hash), false);
 });
 
 test("session cookie roundtrip", () => {
