@@ -228,6 +228,19 @@ function normalizeDisplayName(value, fallback = "") {
   return text || fallback;
 }
 
+function normalizeRepoUrl(value) {
+  return String(value || "").trim().slice(0, 2048);
+}
+
+function normalizeRepoLocalPath(value) {
+  return String(value || "").trim().slice(0, 4096);
+}
+
+function normalizeRepoDefaultBranch(value, fallback = "main") {
+  const text = String(value || "").trim().slice(0, 120);
+  return text || fallback;
+}
+
 function userCanUseCode() {
   return true;
 }
@@ -500,6 +513,7 @@ function serializeAdminUser(user) {
     ...serializeUser(user),
     repoUrl: user.repo_url,
     repoLocalPath: user.repo_local_path,
+    repoDefaultBranch: user.repo_default_branch || "main",
   };
 }
 
@@ -851,6 +865,18 @@ app.patch("/api/admin/users/:userId", requireAdmin, async (req, res) => {
     req.body?.displayName !== undefined
       ? normalizeDisplayName(req.body?.displayName, target.display_name)
       : target.display_name;
+  const nextRepoUrl =
+    req.body?.repoUrl !== undefined
+      ? normalizeRepoUrl(req.body?.repoUrl)
+      : target.repo_url;
+  const nextRepoLocalPath =
+    req.body?.repoLocalPath !== undefined
+      ? normalizeRepoLocalPath(req.body?.repoLocalPath)
+      : target.repo_local_path;
+  const nextRepoDefaultBranch =
+    req.body?.repoDefaultBranch !== undefined
+      ? normalizeRepoDefaultBranch(req.body?.repoDefaultBranch, target.repo_default_branch || "main")
+      : target.repo_default_branch || "main";
   const nextIsAdmin =
     typeof req.body?.isAdmin === "boolean"
       ? req.body.isAdmin
@@ -871,9 +897,9 @@ app.patch("/api/admin/users/:userId", requireAdmin, async (req, res) => {
     id: target.id,
     passwordHash: nextPassword !== null ? hashPassword(nextPassword) : null,
     displayName: nextDisplayName,
-    repoUrl: target.repo_url,
-    repoLocalPath: target.repo_local_path,
-    repoDefaultBranch: target.repo_default_branch,
+    repoUrl: nextRepoUrl,
+    repoLocalPath: nextRepoLocalPath,
+    repoDefaultBranch: nextRepoDefaultBranch,
     chatModel: target.chat_model,
     allowedModels: target.allowedModels,
     canUseCode: true,

@@ -98,6 +98,13 @@ const els = {
   adminBreakerCooldownInput: document.getElementById("admin-breaker-cooldown-input"),
   adminHistoryLimitInput: document.getElementById("admin-history-limit-input"),
   adminRoutingResetButton: document.getElementById("admin-routing-reset-button"),
+  adminUserRepoSection: document.getElementById("admin-user-repo-section"),
+  adminUserRepoTitle: document.getElementById("admin-user-repo-title"),
+  adminUserRepoForm: document.getElementById("admin-user-repo-form"),
+  adminUserRepoUrlInput: document.getElementById("admin-user-repo-url-input"),
+  adminUserRepoPathInput: document.getElementById("admin-user-repo-path-input"),
+  adminUserRepoBranchInput: document.getElementById("admin-user-repo-branch-input"),
+  adminUserRepoSaveButton: document.getElementById("admin-user-repo-save-button"),
   adminUserRecordsSection: document.getElementById("admin-user-records-section"),
   adminUserRecordsTitle: document.getElementById("admin-user-records-title"),
   adminUserConversations: document.getElementById("admin-user-conversations"),
@@ -935,12 +942,25 @@ function filteredAdminUsers() {
   });
 }
 
+function setAdminRepoFormDisabled(disabled) {
+  els.adminUserRepoUrlInput.disabled = disabled;
+  els.adminUserRepoPathInput.disabled = disabled;
+  els.adminUserRepoBranchInput.disabled = disabled;
+  els.adminUserRepoSaveButton.disabled = disabled;
+  els.adminUserRepoSaveButton.textContent = disabled ? "Select a user" : "Save Repo";
+}
+
 function renderAdminUserRecords() {
   if (!state.me?.isAdmin) {
     return;
   }
 
   if (!state.adminSelectedUser) {
+    els.adminUserRepoTitle.textContent = "Code Repository";
+    els.adminUserRepoUrlInput.value = "";
+    els.adminUserRepoPathInput.value = "";
+    els.adminUserRepoBranchInput.value = "main";
+    setAdminRepoFormDisabled(true);
     els.adminUserRecordsTitle.textContent = "User Conversations";
     els.adminUserConversations.className = "admin-user-records empty-state";
     els.adminUserConversations.textContent = "Select a user.";
@@ -953,6 +973,11 @@ function renderAdminUserRecords() {
     return;
   }
 
+  els.adminUserRepoTitle.textContent = `Code Repository · ${state.adminSelectedUser.displayName}`;
+  els.adminUserRepoUrlInput.value = state.adminSelectedUser.repoUrl || "";
+  els.adminUserRepoPathInput.value = state.adminSelectedUser.repoLocalPath || "";
+  els.adminUserRepoBranchInput.value = state.adminSelectedUser.repoDefaultBranch || "main";
+  setAdminRepoFormDisabled(false);
   els.adminUserRecordsTitle.textContent = `User Conversations · ${state.adminSelectedUser.displayName} (${state.adminSelectedUser.username})`;
   els.adminUserJobsTitle.textContent = `User Jobs · ${state.adminSelectedUser.displayName}`;
   els.adminUserSessionsTitle.textContent = `User Sessions · ${state.adminSelectedUser.displayName}`;
@@ -1077,6 +1102,7 @@ function renderAdminOverview() {
   const isAdmin = Boolean(state.me.isAdmin);
   els.adminUsersSection.classList.toggle("hidden", !isAdmin);
   els.adminDispatchSettingsSection.classList.toggle("hidden", !isAdmin);
+  els.adminUserRepoSection.classList.toggle("hidden", !isAdmin);
   els.adminUserRecordsSection.classList.toggle("hidden", !isAdmin);
   els.adminUserJobsSection.classList.toggle("hidden", !isAdmin);
   els.adminUserSessionsSection.classList.toggle("hidden", !isAdmin);
@@ -1701,6 +1727,18 @@ async function loadAdminUserConversations(userId) {
   renderAdminUserRecords();
 }
 
+async function saveAdminUserRepoBinding() {
+  if (!state.adminSelectedUserId) {
+    return;
+  }
+
+  await updateAdminUser(state.adminSelectedUserId, {
+    repoUrl: String(els.adminUserRepoUrlInput.value || "").trim(),
+    repoLocalPath: String(els.adminUserRepoPathInput.value || "").trim(),
+    repoDefaultBranch: String(els.adminUserRepoBranchInput.value || "").trim() || "main",
+  });
+}
+
 async function resetRoutingConfig() {
   await api("/api/admin/routing-config", {
     method: "DELETE",
@@ -1905,6 +1943,18 @@ els.adminUsersTable?.addEventListener("click", async (event) => {
 els.adminUserSearchInput?.addEventListener("input", () => {
   state.adminUserSearch = String(els.adminUserSearchInput.value || "");
   renderAdminOverview();
+});
+
+els.adminUserRepoForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.adminSelectedUserId) {
+    return;
+  }
+  try {
+    await saveAdminUserRepoBinding();
+  } catch (error) {
+    window.alert(error.message);
+  }
 });
 
 els.newChatButton.addEventListener("click", async () => {

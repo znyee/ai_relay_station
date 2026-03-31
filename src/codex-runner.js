@@ -177,6 +177,33 @@ function buildCommitUrl(repoUrl, commitHash) {
   return `${baseUrl}/commit/${commitHash}`;
 }
 
+function parseGitStatusLine(line) {
+  const text = String(line || "").trimEnd();
+  if (!text) {
+    return null;
+  }
+
+  const status = text.slice(0, 2).trim() || "??";
+  const rawPath = text.slice(3).trim();
+  if (!rawPath) {
+    return null;
+  }
+
+  if ((status.startsWith("R") || status.startsWith("C")) && rawPath.includes(" -> ")) {
+    const [previousPath, nextPath] = rawPath.split(/\s+->\s+/);
+    return {
+      status,
+      path: String(nextPath || "").trim(),
+      previousPath: String(previousPath || "").trim(),
+    };
+  }
+
+  return {
+    status,
+    path: rawPath,
+  };
+}
+
 async function inspectGitWorkspace(workspacePath) {
   const [status, diffStat, diffText] = await Promise.all([
     execProcess("git", ["status", "--short"], { cwd: workspacePath, allowFailure: true }),
@@ -186,12 +213,8 @@ async function inspectGitWorkspace(workspacePath) {
 
   const changedFiles = status.stdout
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => ({
-      status: line.slice(0, 2).trim() || "??",
-      path: line.slice(3).trim(),
-    }));
+    .map(parseGitStatusLine)
+    .filter(Boolean);
 
   const untrackedFiles = changedFiles
     .filter((file) => file.status === "??")
@@ -280,16 +303,23 @@ async function checkoutRecordBranch(recordPath, branch, gitEnv) {
   throw new Error(`Unable to prepare record branch "${branch}".`);
 }
 
-async function mirrorWorkspaceOutputs(recordPath, workspacePath, changedFiles) {
+export async function mirrorWorkspaceOutputs(recordPath, workspacePath, changedFiles) {
   for (const file of changedFiles || []) {
     const relativePath = String(file.path || "").trim();
+    const previousPath = String(file.previousPath || "").trim();
+    const status = String(file.status || "").trim();
     if (!relativePath || relativePath.startsWith(".git/") || relativePath.startsWith(".relay-attachments/")) {
       continue;
     }
 
+    if (previousPath && previousPath !== relativePath && !previousPath.startsWith(".relay-attachments/")) {
+      await fs.rm(joinPath(recordPath, previousPath), { force: true }).catch(() => {});
+    }
+
     const sourcePath = joinPath(workspacePath, relativePath);
     const exists = await fs.stat(sourcePath).then(() => true).catch(() => false);
-    if (!exists) {
+    if (status.includes("D") || !exists) {
+      await fs.rm(joinPath(recordPath, relativePath), { force: true }).catch(() => {});
       continue;
     }
 

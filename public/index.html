@@ -333,6 +333,27 @@
                   </div>
                 </div>
 
+                <div id="admin-user-repo-section" class="admin-section hidden">
+                  <h4 id="admin-user-repo-title">Code Repository</h4>
+                  <form id="admin-user-repo-form" class="admin-form-grid">
+                    <label>
+                      <span>Remote URL</span>
+                      <input id="admin-user-repo-url-input" type="text" placeholder="https://github.com/org/repo.git" />
+                    </label>
+                    <label>
+                      <span>Local Path</span>
+                      <input id="admin-user-repo-path-input" type="text" placeholder="/home/ubuntu/repos/example" />
+                    </label>
+                    <label>
+                      <span>Default Branch</span>
+                      <input id="admin-user-repo-branch-input" type="text" placeholder="main" />
+                    </label>
+                    <div class="admin-form-actions">
+                      <button id="admin-user-repo-save-button" type="submit">Save Repo</button>
+                    </div>
+                  </form>
+                </div>
+
                 <div id="admin-user-records-section" class="admin-section hidden">
                   <h4 id="admin-user-records-title">User Conversations</h4>
                   <div id="admin-user-conversations" class="admin-user-records empty-state">

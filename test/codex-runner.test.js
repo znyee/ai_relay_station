@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildCodexChildEnv, buildCodexPrompt, getJobPaths } from "../src/codex-runner.js";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { buildCodexChildEnv, buildCodexPrompt, getJobPaths, mirrorWorkspaceOutputs } from "../src/codex-runner.js";
 
 test("buildCodexChildEnv strips chat-side OpenAI overrides and keeps unrelated env", () => {
   const env = buildCodexChildEnv({
@@ -55,4 +58,45 @@ test("getJobPaths uses a workspace directory for code jobs", () => {
 
   assert.equal(paths.workspacePath, "/tmp/workspaces/usr_1/job_1/workspace");
   assert.equal(paths.recordPath, "/tmp/workspaces/usr_1/job_1/record");
+});
+
+test("mirrorWorkspaceOutputs removes deleted files from the record workspace", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-codex-runner-"));
+  const workspacePath = path.join(tempDir, "workspace");
+  const recordPath = path.join(tempDir, "record");
+  await fs.mkdir(workspacePath, { recursive: true });
+  await fs.mkdir(recordPath, { recursive: true });
+  await fs.writeFile(path.join(recordPath, "obsolete.txt"), "remove-me\n", "utf8");
+
+  await mirrorWorkspaceOutputs(recordPath, workspacePath, [
+    {
+      status: "D",
+      path: "obsolete.txt",
+    },
+  ]);
+
+  const exists = await fs.stat(path.join(recordPath, "obsolete.txt")).then(() => true).catch(() => false);
+  assert.equal(exists, false);
+});
+
+test("mirrorWorkspaceOutputs moves renamed files in the record workspace", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-codex-runner-"));
+  const workspacePath = path.join(tempDir, "workspace");
+  const recordPath = path.join(tempDir, "record");
+  await fs.mkdir(path.join(workspacePath, "src"), { recursive: true });
+  await fs.mkdir(path.join(recordPath, "src"), { recursive: true });
+  await fs.writeFile(path.join(recordPath, "src", "old-name.txt"), "old\n", "utf8");
+  await fs.writeFile(path.join(workspacePath, "src", "new-name.txt"), "new\n", "utf8");
+
+  await mirrorWorkspaceOutputs(recordPath, workspacePath, [
+    {
+      status: "R",
+      previousPath: "src/old-name.txt",
+      path: "src/new-name.txt",
+    },
+  ]);
+
+  const oldExists = await fs.stat(path.join(recordPath, "src", "old-name.txt")).then(() => true).catch(() => false);
+  assert.equal(oldExists, false);
+  assert.equal(await fs.readFile(path.join(recordPath, "src", "new-name.txt"), "utf8"), "new\n");
 });

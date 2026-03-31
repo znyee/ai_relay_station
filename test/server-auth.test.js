@@ -300,11 +300,17 @@ test("root can manage users and inspect their conversation history", async (t) =
     body: JSON.stringify({
       password: "654321",
       isAdmin: true,
+      repoUrl: "https://github.com/example/bob-repo.git",
+      repoLocalPath: "/home/ubuntu/repos/bob-repo",
+      repoDefaultBranch: "develop",
     }),
   });
   assert.equal(patchResponse.status, 200);
   const patchedUser = await patchResponse.json();
   assert.equal(patchedUser.user.isAdmin, true);
+  assert.equal(patchedUser.user.repoUrl, "https://github.com/example/bob-repo.git");
+  assert.equal(patchedUser.user.repoLocalPath, "/home/ubuntu/repos/bob-repo");
+  assert.equal(patchedUser.user.repoDefaultBranch, "develop");
 
   const conversationsResponse = await fetch(`${server.baseUrl}/api/admin/users/${bobId}/conversations`, {
     headers: {
@@ -314,6 +320,9 @@ test("root can manage users and inspect their conversation history", async (t) =
   assert.equal(conversationsResponse.status, 200);
   const conversationsPayload = await conversationsResponse.json();
   assert.equal(conversationsPayload.user.username, "bob");
+  assert.equal(conversationsPayload.user.repoUrl, "https://github.com/example/bob-repo.git");
+  assert.equal(conversationsPayload.user.repoLocalPath, "/home/ubuntu/repos/bob-repo");
+  assert.equal(conversationsPayload.user.repoDefaultBranch, "develop");
   assert.equal(conversationsPayload.conversations.length, 1);
   assert.equal(conversationsPayload.conversations[0].messages.length, 2);
   assert.equal(conversationsPayload.conversations[0].messages[0].content, "hello");
