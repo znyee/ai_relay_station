@@ -11,6 +11,36 @@ function splitCsv(value, fallback = []) {
     .filter(Boolean);
 }
 
+function parseJsonObject(value, fallback = {}) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return fallback;
+    }
+    return Object.fromEntries(
+      Object.entries(parsed).map(([key, entryValue]) => [String(key), entryValue]),
+    );
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeAuthMode(value, fallback = "bearer") {
+  const mode = String(value || "").trim().toLowerCase();
+  if (mode === "none") {
+    return "none";
+  }
+  if (mode === "bearer") {
+    return "bearer";
+  }
+  return fallback;
+}
+
 function parseRouteEntry(value) {
   const text = String(value || "").trim();
   if (!text) {
@@ -59,6 +89,10 @@ function parseRouteList(value, fallback = []) {
 }
 
 function pushProvider(providers, env, input) {
+  const authMode = normalizeAuthMode(
+    input.authMode,
+    input.allowUnauthenticated ? "none" : "bearer",
+  );
   const keys = buildProviderApiKeys({
     env,
     envPrefix: input.envPrefix,
@@ -67,6 +101,9 @@ function pushProvider(providers, env, input) {
     endpoint: input.endpoint,
     models: input.models,
     defaultModel: input.defaultModel || input.models[0],
+    allowKeyless: input.allowUnauthenticated || authMode === "none",
+    keylessName: input.keylessName || "direct",
+    keylessSourceEnv: input.keylessSourceEnv || `${input.envPrefix}_ALLOW_NO_AUTH`,
   });
 
   if (keys.length === 0 || input.models.length === 0) {
@@ -82,6 +119,7 @@ function pushProvider(providers, env, input) {
     defaultModel: input.defaultModel || input.models[0],
     headers: input.headers || {},
     body: input.body || {},
+    authMode,
     keys,
   });
 }
@@ -223,6 +261,24 @@ export function buildChatProviders(env = process.env) {
     envPrefix: "TENCENT_HUNYUAN",
     endpoint: "https://api.hunyuan.cloud.tencent.com/v1/chat/completions",
     models: splitCsv(env.TENCENT_HUNYUAN_CHAT_MODELS, ["hunyuan-lite"]),
+  });
+
+  pushProvider(providers, env, {
+    id: "gemini_web",
+    label: env.GEMINI_WEB_LABEL || "Gemini Web Relay",
+    envPrefix: "GEMINI_WEB",
+    endpoint: env.GEMINI_WEB_CHAT_BASE_URL || env.GEMINI_WEB_BASE_URL || "",
+    models: splitCsv(env.GEMINI_WEB_CHAT_MODELS, []),
+    defaultModel: env.GEMINI_WEB_CHAT_MODEL || "",
+    headers: parseJsonObject(env.GEMINI_WEB_CHAT_HEADERS_JSON, {}),
+    body: parseJsonObject(env.GEMINI_WEB_CHAT_BODY_JSON, {}),
+    authMode: normalizeAuthMode(
+      env.GEMINI_WEB_AUTH_MODE,
+      env.GEMINI_WEB_API_KEY || env.GEMINI_WEB_API_KEYS ? "bearer" : "none",
+    ),
+    allowUnauthenticated: env.GEMINI_WEB_ALLOW_NO_AUTH === "1",
+    keylessName: "relay",
+    keylessSourceEnv: "GEMINI_WEB_ALLOW_NO_AUTH",
   });
 
   pushAutoProvider(providers, env);

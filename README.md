@@ -69,6 +69,7 @@ http://127.0.0.1:3210
 - Stores conversation history in SQLite
 - Text attachments are inlined into the model request
 - Image attachments are passed as inline `image_url` content when the selected model accepts images
+- Supports a `Gemini Web Relay` slot for OpenAI-compatible reverse proxies that front a web membership session instead of an official API key
 
 ### Authentication and admin
 
@@ -120,3 +121,25 @@ Auto routes also support weighted metadata:
 ```bash
 AUTO_CHAT_TEXT_ROUTE=siliconflow:deepseek-ai/DeepSeek-R1|priority=120|weight=3,alibaba_bailian:qwen-plus-2025-12-01|priority=90|weight=1
 ```
+
+## Gemini Web Relay
+
+If you have a Gemini web subscription and run your own OpenAI-compatible relay in front of it, Relay Station can expose that relay as a normal selectable provider.
+
+Example:
+
+```bash
+GEMINI_WEB_CHAT_BASE_URL=http://127.0.0.1:4100/v1/chat/completions
+GEMINI_WEB_CHAT_MODELS=gemini-2.5-pro,gemini-2.5-flash
+GEMINI_WEB_CHAT_MODEL=gemini-2.5-pro
+GEMINI_WEB_AUTH_MODE=none
+GEMINI_WEB_ALLOW_NO_AUTH=1
+GEMINI_WEB_CHAT_HEADERS_JSON='{"x-relay-source":"gemini-web"}'
+```
+
+Notes:
+
+- This project does not log into `gemini.google.com` directly.
+- The upstream must already expose an OpenAI-compatible `/v1/chat/completions` endpoint.
+- If your upstream requires a bearer token, set `GEMINI_WEB_API_KEY` and switch `GEMINI_WEB_AUTH_MODE=bearer`.
+- If your upstream needs extra static headers or body fields, use `GEMINI_WEB_CHAT_HEADERS_JSON` and `GEMINI_WEB_CHAT_BODY_JSON`.

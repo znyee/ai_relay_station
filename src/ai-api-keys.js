@@ -97,6 +97,33 @@ function createKeyRecord({
   };
 }
 
+function createKeylessRecord({
+  providerId,
+  providerLabel,
+  endpoint,
+  models,
+  defaultModel,
+  name = "direct",
+  sourceEnv = "NO_AUTH",
+}) {
+  const keyName = String(name || "direct").trim() || "direct";
+  return {
+    id: `${providerId}__${slugify(keyName, "direct")}`,
+    providerId,
+    providerLabel,
+    keyName,
+    apiKey: "",
+    maskedKey: "",
+    endpoint,
+    models,
+    defaultModel,
+    priority: 100,
+    weight: 1,
+    enabled: true,
+    sourceEnv,
+  };
+}
+
 export function buildProviderApiKeys({
   env = process.env,
   envPrefix,
@@ -105,6 +132,9 @@ export function buildProviderApiKeys({
   endpoint,
   models,
   defaultModel,
+  allowKeyless = false,
+  keylessName = "direct",
+  keylessSourceEnv = "",
 }) {
   const keysVarName = `${envPrefix}_API_KEYS`;
   const singleVarName = `${envPrefix}_API_KEY`;
@@ -151,24 +181,40 @@ export function buildProviderApiKeys({
   }
 
   const secret = normalizeEntry(env[singleVarName]);
-  if (!secret) {
+  const single = secret
+    ? createKeyRecord({
+        providerId,
+        providerLabel,
+        endpoint,
+        models,
+        defaultModel,
+        name: normalizeEntry(env[singleNameVarName]) || "primary",
+        secret,
+        sourceEnv: singleVarName,
+        metadata: {},
+        index: 0,
+      })
+    : null;
+
+  if (single) {
+    return [single];
+  }
+
+  if (!allowKeyless) {
     return [];
   }
 
-  const single = createKeyRecord({
-    providerId,
-    providerLabel,
-    endpoint,
-    models,
-    defaultModel,
-    name: normalizeEntry(env[singleNameVarName]) || "primary",
-    secret,
-    sourceEnv: singleVarName,
-    metadata: {},
-    index: 0,
-  });
-
-  return single ? [single] : [];
+  return [
+    createKeylessRecord({
+      providerId,
+      providerLabel,
+      endpoint,
+      models,
+      defaultModel,
+      name: keylessName,
+      sourceEnv: keylessSourceEnv || `${envPrefix}_ALLOW_NO_AUTH`,
+    }),
+  ];
 }
 
 export function serializeAiApiKey(apiKey) {

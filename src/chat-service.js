@@ -73,16 +73,25 @@ function extractError(payload, fallback) {
   return payload?.error?.message || payload?.message || fallback || "Chat request failed.";
 }
 
+function buildRequestHeaders(provider, apiKey) {
+  const headers = {
+    "content-type": "application/json",
+    ...provider.headers,
+  };
+
+  if ((provider.authMode || "bearer") === "bearer" && apiKey?.apiKey) {
+    headers.authorization = `Bearer ${apiKey.apiKey}`;
+  }
+
+  return headers;
+}
+
 async function postChat(provider, apiKey, body, options = {}) {
   let response;
   try {
     response = await fetch(provider.endpoint, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey.apiKey}`,
-        ...provider.headers,
-      },
+      headers: buildRequestHeaders(provider, apiKey),
       body: JSON.stringify(body),
       signal: options.signal,
     });
@@ -124,11 +133,7 @@ async function postChatStream(provider, apiKey, body, options = {}) {
   try {
     response = await fetch(provider.endpoint, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey.apiKey}`,
-        ...provider.headers,
-      },
+      headers: buildRequestHeaders(provider, apiKey),
       body: JSON.stringify({
         ...body,
         stream: true,

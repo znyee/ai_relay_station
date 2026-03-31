@@ -86,3 +86,24 @@ test("provider catalog supports multiple weighted API keys per provider", () => 
   assert.equal(provider.keys[0].weight, 3);
   assert.equal(provider.keys[1].keyName, "backup");
 });
+
+test("gemini web relay can be exposed without an explicit api key", () => {
+  const { providers } = buildChatProviders({
+    GEMINI_WEB_CHAT_BASE_URL: "http://127.0.0.1:4100/v1/chat/completions",
+    GEMINI_WEB_CHAT_MODELS: "gemini-2.5-pro,gemini-2.5-flash",
+    GEMINI_WEB_CHAT_MODEL: "gemini-2.5-pro",
+    GEMINI_WEB_ALLOW_NO_AUTH: "1",
+    GEMINI_WEB_CHAT_HEADERS_JSON: '{"x-relay-source":"member-web"}',
+  });
+
+  const provider = providers.find((entry) => entry.id === "gemini_web");
+  assert.ok(provider);
+  assert.equal(provider.label, "Gemini Web Relay");
+  assert.equal(provider.authMode, "none");
+  assert.equal(provider.endpoint, "http://127.0.0.1:4100/v1/chat/completions");
+  assert.deepEqual(provider.models, ["gemini-2.5-pro", "gemini-2.5-flash"]);
+  assert.equal(provider.keys.length, 1);
+  assert.equal(provider.keys[0].apiKey, "");
+  assert.equal(provider.keys[0].keyName, "relay");
+  assert.equal(provider.headers["x-relay-source"], "member-web");
+});

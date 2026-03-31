@@ -530,3 +530,106 @@ test("single provider can fail over across weighted API keys and expose admin te
   assert.equal(apiKeys.find((entry) => entry.keyName === "backup").successCount, 1);
   assert.equal(service.listDispatchEvents(10)[0].status, "success");
 });
+
+test("keyless relay provider can call an upstream without bearer auth", async (t) => {
+  const originalFetch = global.fetch;
+  const captured = [];
+
+  global.fetch = async (url, options) => {
+    captured.push({
+      url,
+      headers: { ...options.headers },
+      body: JSON.parse(String(options.body || "{}")),
+    });
+
+    return new Response(
+      JSON.stringify({
+        id: "resp_relay",
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: "Relay OK",
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  };
+
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const service = createChatService({
+    chatProviders: [
+      {
+        id: "gemini_web",
+        label: "Gemini Web Relay",
+        endpoint: "http://127.0.0.1:4100/v1/chat/completions",
+        models: ["gemini-2.5-pro"],
+        defaultModel: "gemini-2.5-pro",
+        headers: {
+          "x-relay-source": "member-web",
+        },
+        body: {
+          metadata: {
+            account: "gemini-pro",
+          },
+        },
+        authMode: "none",
+        keys: [
+          {
+            id: "gemini_web__relay",
+            providerId: "gemini_web",
+            providerLabel: "Gemini Web Relay",
+            keyName: "relay",
+            apiKey: "",
+            maskedKey: "",
+            endpoint: "http://127.0.0.1:4100/v1/chat/completions",
+            models: ["gemini-2.5-pro"],
+            defaultModel: "gemini-2.5-pro",
+            priority: 100,
+            weight: 1,
+            enabled: true,
+            sourceEnv: "GEMINI_WEB_ALLOW_NO_AUTH",
+          },
+        ],
+      },
+    ],
+    defaultChatProviderId: "gemini_web",
+    chatAttachmentTextBytes: 4096,
+    chatInlineImageBytes: 4096,
+    autoChatRetryCooldownMs: 60_000,
+    autoChatQuotaCooldownMs: 300_000,
+  });
+
+  const reply = await service.respond({
+    user: {
+      display_name: "user1",
+      username: "user1",
+      repo_url: "",
+      repo_local_path: "",
+    },
+    history: [
+      {
+        role: "user",
+        content: "hello",
+        attachments: [],
+      },
+    ],
+    providerId: "gemini_web",
+    model: "gemini-2.5-pro",
+  });
+
+  assert.equal(reply.text, "Relay OK");
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].headers.authorization, undefined);
+  assert.equal(captured[0].headers["x-relay-source"], "member-web");
+  assert.equal(captured[0].body.metadata.account, "gemini-pro");
+  assert.equal(captured[0].body.model, "gemini-2.5-pro");
+});
