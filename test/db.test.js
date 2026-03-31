@@ -104,7 +104,7 @@ test("database can persist JSON app settings", async () => {
     dispatch: {
       retryCooldownMs: 10_000,
     },
-    keyRules: [{ providerId: "openai", keyId: "openai__primary", scope: "all" }],
+    routeOverrides: [{ routeType: "text", providerId: "openai", model: "gpt-5" }],
   };
 
   db.setSetting("routing_config", value);

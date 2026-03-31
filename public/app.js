@@ -111,13 +111,6 @@ const els = {
   adminProviderUsageTable: document.getElementById("admin-provider-usage-table"),
   adminApiKeyTable: document.getElementById("admin-api-key-table"),
   adminAutoRoutingTable: document.getElementById("admin-auto-routing-table"),
-  adminKeyRulesSection: document.getElementById("admin-key-rules-section"),
-  adminKeyRuleForm: document.getElementById("admin-key-rule-form"),
-  adminKeyRuleProviderSelect: document.getElementById("admin-key-rule-provider-select"),
-  adminKeyRuleKeySelect: document.getElementById("admin-key-rule-key-select"),
-  adminKeyRuleScopeSelect: document.getElementById("admin-key-rule-scope-select"),
-  adminKeyRuleModelSelect: document.getElementById("admin-key-rule-model-select"),
-  adminKeyRulesTable: document.getElementById("admin-key-rules-table"),
   adminDispatchTable: document.getElementById("admin-dispatch-table"),
   adminAuthTable: document.getElementById("admin-auth-table"),
 };
@@ -886,56 +879,12 @@ function cloneRoutingConfig() {
   return JSON.parse(JSON.stringify(currentRoutingConfig()));
 }
 
-function providerForAdmin(providerId) {
-  return state.chat?.providers?.find((provider) => provider.id === providerId) || null;
-}
-
-function adminApiKeysForProvider(providerId) {
-  return (state.adminOverview?.apiKeys || []).filter((apiKey) => apiKey.providerId === providerId);
-}
-
-function populateSelectOptions(element, options, selectedValue = "") {
-  if (!element) {
-    return;
-  }
-
-  const normalizedOptions = options || [];
-  element.innerHTML = "";
-  for (const optionData of normalizedOptions) {
-    const option = document.createElement("option");
-    option.value = optionData.value;
-    option.textContent = optionData.label;
-    if (optionData.value === selectedValue) {
-      option.selected = true;
-    }
-    element.append(option);
-  }
-
-  if (!element.value && normalizedOptions[0]) {
-    element.value = normalizedOptions[0].value;
-  }
-}
-
 function routingPriorityForIndex(index) {
   return Math.max(1, ROUTING_PRIORITY_BASE - index * ROUTING_PRIORITY_STEP);
 }
 
 function rankLabel(index) {
   return `#${index + 1}`;
-}
-
-function sortKeyRulesForDisplay(rules = []) {
-  return [...rules].sort((left, right) => {
-    if ((right.priority || 0) !== (left.priority || 0)) {
-      return (right.priority || 0) - (left.priority || 0);
-    }
-    if ((left.scope || "all") !== (right.scope || "all")) {
-      return (left.scope || "all").localeCompare(right.scope || "all");
-    }
-    return `${left.providerId}:${left.keyId}:${left.model || ""}`.localeCompare(
-      `${right.providerId}:${right.keyId}:${right.model || ""}`,
-    );
-  });
 }
 
 function autoRouteGroupsForDisplay() {
@@ -964,61 +913,6 @@ function buildRouteOverridesFromGroups(groups) {
       weight: 1,
     })),
   );
-}
-
-function normalizedKeyRulesFromOrderedList(rules) {
-  return (rules || []).map((rule, index) => ({
-    providerId: rule.providerId,
-    keyId: rule.keyId,
-    scope: rule.scope === "model" ? "model" : "all",
-    model: rule.scope === "model" ? String(rule.model || "") : "",
-    enabled: true,
-    priority: routingPriorityForIndex(index),
-    weight: 1,
-  }));
-}
-
-function syncAdminKeyRuleForm() {
-  if (!state.me?.isAdmin) {
-    return;
-  }
-
-  const providerOptions = Array.from(
-    new Map(
-      (state.adminOverview?.apiKeys || []).map((apiKey) => [
-        apiKey.providerId,
-        {
-          value: apiKey.providerId,
-          label: apiKey.providerLabel,
-        },
-      ]),
-    ).values(),
-  );
-  populateSelectOptions(els.adminKeyRuleProviderSelect, providerOptions, els.adminKeyRuleProviderSelect.value);
-  const providerId = els.adminKeyRuleProviderSelect.value || providerOptions[0]?.value || "";
-  const apiKeys = adminApiKeysForProvider(providerId);
-  populateSelectOptions(
-    els.adminKeyRuleKeySelect,
-    apiKeys.map((apiKey) => ({
-      value: apiKey.id,
-      label: apiKey.keyName,
-    })),
-    els.adminKeyRuleKeySelect.value,
-  );
-
-  const selectedKeyId = els.adminKeyRuleKeySelect.value || apiKeys[0]?.id || "";
-  const selectedKey = apiKeys.find((apiKey) => apiKey.id === selectedKeyId) || apiKeys[0] || null;
-  const scope = els.adminKeyRuleScopeSelect.value === "model" ? "model" : "all";
-  const provider = providerForAdmin(providerId);
-  const modelOptions =
-    scope === "model"
-      ? (selectedKey?.models || provider?.models || []).map((model) => ({
-          value: model,
-          label: model,
-        }))
-      : [{ value: "", label: "All Models" }];
-  populateSelectOptions(els.adminKeyRuleModelSelect, modelOptions, els.adminKeyRuleModelSelect.value);
-  els.adminKeyRuleModelSelect.disabled = scope !== "model";
 }
 
 async function saveRoutingConfig(routingConfig) {
@@ -1183,7 +1077,6 @@ function renderAdminOverview() {
   const isAdmin = Boolean(state.me.isAdmin);
   els.adminUsersSection.classList.toggle("hidden", !isAdmin);
   els.adminDispatchSettingsSection.classList.toggle("hidden", !isAdmin);
-  els.adminKeyRulesSection.classList.toggle("hidden", !isAdmin);
   els.adminUserRecordsSection.classList.toggle("hidden", !isAdmin);
   els.adminUserJobsSection.classList.toggle("hidden", !isAdmin);
   els.adminUserSessionsSection.classList.toggle("hidden", !isAdmin);
@@ -1197,7 +1090,6 @@ function renderAdminOverview() {
     renderTableEmptyBody(els.adminDispatchTable, 8, "No dispatch events yet.");
     if (isAdmin) {
       renderTableEmptyBody(els.adminUsersTable, 5, "No users loaded.");
-      renderTableEmptyBody(els.adminKeyRulesTable, 5, "No key rules configured.");
       renderTableEmptyBody(els.adminAuthTable, 5, "No authentication audit events yet.");
       renderAdminUserRecords();
     }
@@ -1286,7 +1178,6 @@ function renderAdminOverview() {
             <td>
               <strong>${escapeCell(apiKey.keyName)}</strong>
               <div class="table-subline">${escapeCell(apiKey.maskedKey)}</div>
-              ${apiKey.ruleCount ? `<div class="table-subline">${escapeCell(`${apiKey.ruleCount} rule${apiKey.ruleCount === 1 ? "" : "s"}`)}</div>` : ""}
             </td>
             <td><span class="status-pill ${escapeHtml(apiKey.status)}">${escapeCell(apiKey.status)}</span></td>
             <td>
@@ -1340,47 +1231,6 @@ function renderAdminOverview() {
         `);
       })
       .join("");
-  }
-
-  if (isAdmin) {
-    const keyIndex = new Map((overview.apiKeys || []).map((apiKey) => [apiKey.id, apiKey]));
-    const keyRules = sortKeyRulesForDisplay(currentRoutingConfig().keyRules || []);
-    if (!keyRules.length) {
-      renderTableEmptyBody(els.adminKeyRulesTable, 5, "No key preferences configured.");
-    } else {
-      els.adminKeyRulesTable.innerHTML = keyRules
-        .map((rule, index) => {
-          const apiKey = keyIndex.get(rule.keyId);
-          return `
-            <tr>
-              <td><span class="rank-pill">${escapeHtml(rankLabel(index))}</span></td>
-              <td>${escapeCell(apiKey?.providerLabel || rule.providerId)}</td>
-              <td>${escapeCell(apiKey?.keyName || rule.keyId)}</td>
-              <td>
-                ${
-                  rule.scope === "model"
-                    ? `<strong>${escapeCell(rule.model)}</strong><div class="table-subline">one model</div>`
-                    : `<strong>All Models</strong><div class="table-subline">provider-wide</div>`
-                }
-              </td>
-              <td>
-                <div class="admin-table-actions">
-                  <button type="button" class="ghost-button compact-button" data-action="rule-up" data-rule-id="${escapeHtml(rule.id)}" ${index === 0 ? "disabled" : ""}>Up</button>
-                  <button type="button" class="ghost-button compact-button" data-action="rule-down" data-rule-id="${escapeHtml(rule.id)}" ${index === keyRules.length - 1 ? "disabled" : ""}>Down</button>
-                  <button
-                    type="button"
-                    class="ghost-button compact-button danger-button"
-                    data-action="delete-rule"
-                    data-rule-id="${escapeHtml(rule.id)}"
-                  >Delete</button>
-                </div>
-              </td>
-            </tr>
-          `;
-        })
-        .join("");
-    }
-    syncAdminKeyRuleForm();
   }
 
   if (!overview.dispatchEvents?.length) {
@@ -1868,54 +1718,6 @@ async function saveAutoRoutingOverrides(groups = autoRouteGroupsForDisplay()) {
   await saveRoutingConfig(routingConfig);
 }
 
-async function saveKeyRule() {
-  const providerId = String(els.adminKeyRuleProviderSelect.value || "").trim();
-  const keyId = String(els.adminKeyRuleKeySelect.value || "").trim();
-  const scope = els.adminKeyRuleScopeSelect.value === "model" ? "model" : "all";
-  const model = scope === "model" ? String(els.adminKeyRuleModelSelect.value || "").trim() : "";
-  if (!providerId || !keyId) {
-    throw new Error("Select a provider and key.");
-  }
-  if (scope === "model" && !model) {
-    throw new Error("Select a model.");
-  }
-
-  const nextRule = {
-    providerId,
-    keyId,
-    scope,
-    model,
-  };
-  const ruleIdentity = `${providerId}:${keyId}:${scope}:${model || "*"}`;
-  const rules = sortKeyRulesForDisplay(currentRoutingConfig().keyRules || []).filter(
-    (rule) => `${rule.providerId}:${rule.keyId}:${rule.scope}:${rule.model || "*"}` !== ruleIdentity,
-  );
-  rules.unshift(nextRule);
-  const routingConfig = cloneRoutingConfig();
-  routingConfig.keyRules = normalizedKeyRulesFromOrderedList(rules);
-  await saveRoutingConfig(routingConfig);
-}
-
-async function deleteKeyRule(ruleId) {
-  const rules = sortKeyRulesForDisplay(currentRoutingConfig().keyRules || []).filter((rule) => rule.id !== ruleId);
-  const routingConfig = cloneRoutingConfig();
-  routingConfig.keyRules = normalizedKeyRulesFromOrderedList(rules);
-  await saveRoutingConfig(routingConfig);
-}
-
-async function moveKeyRule(ruleId, direction) {
-  const rules = sortKeyRulesForDisplay(currentRoutingConfig().keyRules || []);
-  const index = rules.findIndex((rule) => rule.id === ruleId);
-  const nextIndex = index + direction;
-  if (index < 0 || nextIndex < 0 || nextIndex >= rules.length) {
-    return;
-  }
-  [rules[index], rules[nextIndex]] = [rules[nextIndex], rules[index]];
-  const routingConfig = cloneRoutingConfig();
-  routingConfig.keyRules = normalizedKeyRulesFromOrderedList(rules);
-  await saveRoutingConfig(routingConfig);
-}
-
 async function setAutoRouteEnabled(routeType, routeId, enabled) {
   const groups = autoRouteGroupsForDisplay();
   const routes = groups[routeType] || [];
@@ -1988,53 +1790,12 @@ els.adminDispatchForm?.addEventListener("submit", async (event) => {
 });
 
 els.adminRoutingResetButton?.addEventListener("click", async () => {
-  if (!window.confirm("Reset dispatch, route, and key rules to defaults?")) {
+  if (!window.confirm("Reset dispatch settings and auto routing to defaults?")) {
     return;
   }
   await resetRoutingConfig().catch((error) => {
     window.alert(error.message);
   });
-});
-
-els.adminKeyRuleForm?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  await saveKeyRule().catch((error) => {
-    window.alert(error.message);
-  });
-});
-
-els.adminKeyRuleProviderSelect?.addEventListener("change", () => {
-  syncAdminKeyRuleForm();
-});
-
-els.adminKeyRuleKeySelect?.addEventListener("change", () => {
-  syncAdminKeyRuleForm();
-});
-
-els.adminKeyRuleScopeSelect?.addEventListener("change", () => {
-  syncAdminKeyRuleForm();
-});
-
-els.adminKeyRulesTable?.addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-action]");
-  if (!button) {
-    return;
-  }
-  try {
-    if (button.dataset.action === "rule-up") {
-      await moveKeyRule(button.dataset.ruleId, -1);
-      return;
-    }
-    if (button.dataset.action === "rule-down") {
-      await moveKeyRule(button.dataset.ruleId, 1);
-      return;
-    }
-    if (button.dataset.action === "delete-rule") {
-      await deleteKeyRule(button.dataset.ruleId);
-    }
-  } catch (error) {
-    window.alert(error.message);
-  }
 });
 
 els.adminAutoRoutingTable?.addEventListener("change", async (event) => {

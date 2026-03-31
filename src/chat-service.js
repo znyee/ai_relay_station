@@ -472,10 +472,6 @@ function routeId(routeType, providerId, model) {
   return `${routeType}:${providerId}:${model}`;
 }
 
-function keyRuleId(providerId, keyId, scope, model = "") {
-  return `${providerId}:${keyId}:${scope}:${model || "*"}`;
-}
-
 export function createChatService(config) {
   const normalizedProviders = (config.chatProviders || []).map((provider) => {
     if (provider.isVirtual || (provider.keys && provider.keys.length > 0)) {
@@ -531,8 +527,6 @@ export function createChatService(config) {
   const baseAutoRoutesById = new Map(baseAutoRoutes.map((route) => [route.id, route]));
   let routingConfig = null;
   let routeOverridesById = new Map();
-  let keyRulesById = new Map();
-  let keyRuleCounts = new Map();
 
   for (const apiKey of providerKeys) {
     apiKeyStates.set(apiKey.id, createEmptyKeyState());
@@ -591,54 +585,16 @@ export function createChatService(config) {
       });
     }
 
-    const keyRules = [];
-    const seenKeyRuleIds = new Set();
-    for (const entry of Array.isArray(raw.keyRules) ? raw.keyRules : []) {
-      const providerId = String(entry?.providerId || "").trim();
-      const keyId = String(entry?.keyId || "").trim();
-      const apiKey = providerKeysById.get(keyId);
-      if (!apiKey || apiKey.providerId !== providerId) {
-        continue;
-      }
-
-      const scope = String(entry?.scope || "all").trim() === "model" ? "model" : "all";
-      const model = scope === "model" ? String(entry?.model || "").trim() : "";
-      if (scope === "model" && (!model || !apiKey.models.includes(model))) {
-        continue;
-      }
-
-      const id = keyRuleId(providerId, keyId, scope, model);
-      if (seenKeyRuleIds.has(id)) {
-        continue;
-      }
-      seenKeyRuleIds.add(id);
-      keyRules.push({
-        id,
-        providerId,
-        keyId,
-        scope,
-        model,
-        enabled: entry?.enabled !== false,
-        priority: normalizePriority(entry?.priority, apiKey.priority),
-        weight: normalizeWeight(entry?.weight, apiKey.weight),
-      });
-    }
-
     routeOverrides.sort((left, right) =>
       `${left.routeType}:${left.providerId}:${left.model}`.localeCompare(
         `${right.routeType}:${right.providerId}:${right.model}`,
-      ),
-    );
-    keyRules.sort((left, right) =>
-      `${left.providerId}:${left.keyId}:${left.scope}:${left.model}`.localeCompare(
-        `${right.providerId}:${right.keyId}:${right.scope}:${right.model}`,
       ),
     );
 
     return {
       dispatch,
       routeOverrides,
-      keyRules,
+      keyRules: [],
     };
   }
 
@@ -652,11 +608,6 @@ export function createChatService(config) {
   function applyRoutingConfig(input = {}) {
     routingConfig = normalizeRoutingConfig(input);
     routeOverridesById = new Map(routingConfig.routeOverrides.map((entry) => [entry.id, entry]));
-    keyRulesById = new Map(routingConfig.keyRules.map((entry) => [entry.id, entry]));
-    keyRuleCounts = new Map();
-    for (const rule of routingConfig.keyRules) {
-      keyRuleCounts.set(rule.keyId, (keyRuleCounts.get(rule.keyId) || 0) + 1);
-    }
     trimDispatchHistory();
     return cloneValue(routingConfig);
   }
@@ -674,21 +625,14 @@ export function createChatService(config) {
     return apiKeyStates.get(apiKey.id);
   }
 
-  function effectiveKeyConfig(apiKey, model = "") {
-    const allRule = keyRulesById.get(keyRuleId(apiKey.providerId, apiKey.id, "all", ""));
-    const modelRule = model ? keyRulesById.get(keyRuleId(apiKey.providerId, apiKey.id, "model", model)) : null;
-    const appliedRule = modelRule || allRule || null;
+  function effectiveKeyConfig(apiKey) {
     return {
-      enabled: appliedRule ? appliedRule.enabled : apiKey.enabled,
-      priority: appliedRule ? appliedRule.priority : apiKey.priority,
-      weight: appliedRule ? appliedRule.weight : apiKey.weight,
+      enabled: apiKey.enabled,
+      priority: apiKey.priority,
+      weight: apiKey.weight,
       baseEnabled: apiKey.enabled,
       basePriority: apiKey.priority,
       baseWeight: apiKey.weight,
-      ruleId: appliedRule?.id || "",
-      ruleScope: appliedRule?.scope || "",
-      ruleModel: appliedRule?.model || "",
-      ruleCount: keyRuleCounts.get(apiKey.id) || 0,
     };
   }
 
@@ -701,7 +645,7 @@ export function createChatService(config) {
       if (!Array.isArray(apiKey.models) || !apiKey.models.includes(model)) {
         return false;
       }
-      return effectiveKeyConfig(apiKey, model).enabled;
+      return effectiveKeyConfig(apiKey).enabled;
     });
   }
 
@@ -760,9 +704,6 @@ export function createChatService(config) {
       baseEnabled: keyConfig.baseEnabled,
       basePriority: keyConfig.basePriority,
       baseWeight: keyConfig.baseWeight,
-      ruleCount: keyConfig.ruleCount,
-      ruleScope: keyConfig.ruleScope,
-      ruleModel: keyConfig.ruleModel,
       status: apiKeyStatus(keyConfig, state),
       successCount: state.successCount,
       failureCount: state.failureCount,
@@ -805,7 +746,7 @@ export function createChatService(config) {
       ...((provider.keys || [])
         .filter((apiKey) => Array.isArray(apiKey.models) && apiKey.models.includes(route.model))
         .map((apiKey) => {
-          const keyConfig = effectiveKeyConfig(apiKey, route.model);
+          const keyConfig = effectiveKeyConfig(apiKey);
           if (!keyConfig.enabled) {
             return Number.NEGATIVE_INFINITY;
           }
@@ -901,7 +842,7 @@ export function createChatService(config) {
       .filter((apiKey) => Array.isArray(apiKey.models) && apiKey.models.includes(model))
       .map((apiKey) => ({
         apiKey,
-        keyConfig: effectiveKeyConfig(apiKey, model),
+        keyConfig: effectiveKeyConfig(apiKey),
       }))
       .filter((entry) => entry.keyConfig.enabled);
     if (candidates.length === 0) {

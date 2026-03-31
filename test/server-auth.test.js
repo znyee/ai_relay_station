@@ -273,23 +273,13 @@ test("root can persist and reset routing configuration", async (t) => {
           enabled: true,
         },
       ],
-      keyRules: [
-        {
-          providerId: "siliconflow",
-          keyId: "siliconflow__primary",
-          scope: "all",
-          priority: 180,
-          weight: 3,
-          enabled: true,
-        },
-      ],
     }),
   });
   assert.equal(saveResponse.status, 200);
   const savePayload = await saveResponse.json();
   assert.equal(savePayload.routingConfig.dispatch.retryCooldownMs, 11_000);
   assert.equal(savePayload.routingConfig.routeOverrides[0].priority, 260);
-  assert.equal(savePayload.routingConfig.keyRules[0].priority, 180);
+  assert.deepEqual(savePayload.routingConfig.keyRules, []);
 
   const overviewResponse = await fetch(`${server.baseUrl}/api/admin/overview`, {
     headers: {
