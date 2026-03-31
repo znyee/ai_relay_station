@@ -172,6 +172,23 @@ export function createDatabase(databasePath) {
   ensureColumn(db, "code_jobs", "attachments_json", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, "code_jobs", "output_attachments_json", "TEXT NOT NULL DEFAULT '[]'");
 
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sessions_user_last_seen_created
+      ON sessions (user_id, last_seen_at DESC, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sessions_expires_at
+      ON sessions (expires_at);
+    CREATE INDEX IF NOT EXISTS idx_auth_audit_events_created_at
+      ON auth_audit_events (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chat_conversations_user_pinned_updated
+      ON chat_conversations (user_id, pinned_at DESC, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_created_at
+      ON chat_messages (conversation_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_code_jobs_user_pinned_created
+      ON code_jobs (user_id, pinned_at DESC, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_code_jobs_status_created_at
+      ON code_jobs (status, created_at ASC);
+  `);
+
   const statements = {
     insertUser: db.prepare(`
       INSERT INTO users (
@@ -352,6 +369,14 @@ export function createDatabase(databasePath) {
       WHERE status = 'pending'
       ORDER BY created_at ASC
       LIMIT 1
+    `),
+    claimPendingJob: db.prepare(`
+      UPDATE code_jobs
+      SET
+        status = 'running',
+        started_at = @started_at
+      WHERE id = @id
+        AND status = 'pending'
     `),
     markJobRunning: db.prepare(`
       UPDATE code_jobs
@@ -679,6 +704,45 @@ export function createDatabase(databasePath) {
 
     getNextPendingJob() {
       return parseRow(statements.getNextPendingJob.get());
+    },
+
+    claimNextPendingJob() {
+      let inTransaction = false;
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        inTransaction = true;
+
+        const nextJob = statements.getNextPendingJob.get();
+        if (!nextJob) {
+          db.exec("COMMIT");
+          inTransaction = false;
+          return null;
+        }
+
+        const startedAt = nowIso();
+        const claimed = statements.claimPendingJob.run({
+          id: nextJob.id,
+          started_at: startedAt,
+        });
+        if (claimed.changes === 0) {
+          db.exec("ROLLBACK");
+          inTransaction = false;
+          return null;
+        }
+
+        db.exec("COMMIT");
+        inTransaction = false;
+        return parseRow({
+          ...nextJob,
+          status: "running",
+          started_at: startedAt,
+        });
+      } catch (error) {
+        if (inTransaction) {
+          db.exec("ROLLBACK");
+        }
+        throw error;
+      }
     },
 
     markJobRunning(jobId, workspacePath, logPath = "", commandPreview = "") {

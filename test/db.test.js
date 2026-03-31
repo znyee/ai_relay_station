@@ -139,6 +139,39 @@ test("database can fail orphaned running jobs after restart", async () => {
   assert.ok(updated.finished_at);
 });
 
+test("database can atomically claim pending jobs in created order", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-station-"));
+  const db = createDatabase(path.join(tempDir, "app.db"));
+
+  const user = db.createUser({
+    username: "queue-owner",
+    passwordHash: "salt:hash",
+    displayName: "Queue Owner",
+    repoUrl: "https://github.com/example/repo.git",
+    repoLocalPath: "/tmp/repo",
+    repoDefaultBranch: "main",
+    chatModel: "gpt-5",
+    allowedModels: ["gpt-5"],
+    canUseCode: true,
+  });
+
+  const first = db.createJob(user.id, "First");
+  const second = db.createJob(user.id, "Second");
+
+  const claimedFirst = db.claimNextPendingJob();
+  const claimedSecond = db.claimNextPendingJob();
+  const claimedNone = db.claimNextPendingJob();
+
+  assert.equal(claimedFirst.id, first.id);
+  assert.equal(claimedFirst.status, "running");
+  assert.ok(claimedFirst.started_at);
+  assert.equal(claimedSecond.id, second.id);
+  assert.equal(claimedSecond.status, "running");
+  assert.equal(claimedNone, null);
+  assert.equal(db.getJob(user.id, first.id).status, "running");
+  assert.equal(db.getJob(user.id, second.id).status, "running");
+});
+
 test("database can pin conversations and list pinned ones first", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-station-"));
   const db = createDatabase(path.join(tempDir, "app.db"));
