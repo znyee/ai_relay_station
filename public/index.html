@@ -16,10 +16,40 @@
             <p class="lede">
               Chat runs as independent sessions. Code runs in isolated workspaces. A repository can record outputs, but it does not define the logic.
             </p>
+            <div class="login-highlights">
+              <div class="highlight-pill">Chat</div>
+              <div class="highlight-pill">Code</div>
+              <div class="highlight-pill">Control</div>
+            </div>
+            <div class="login-stats">
+              <article class="login-stat">
+                <span>Context</span>
+                <strong>Per-chat memory</strong>
+                <p>Every conversation stays isolated, so planning and execution do not leak into each other.</p>
+              </article>
+              <article class="login-stat">
+                <span>Execution</span>
+                <strong>Queued code work</strong>
+                <p>Code jobs run in fresh workspaces with logs, artifacts, and a predictable queue.</p>
+              </article>
+              <article class="login-stat">
+                <span>Control</span>
+                <strong>Live API visibility</strong>
+                <p>All users can inspect routing health. Root sees accounts, roles, and conversation history.</p>
+              </article>
+            </div>
           </div>
 
           <div class="login-form-shell">
             <p class="eyebrow">Access</p>
+            <div class="login-panel-intro">
+              <h2>Enter quietly.</h2>
+              <p class="panel-note">Registration only asks for a username, a password, and one confirmation step.</p>
+            </div>
+            <div id="auth-mode-toggle" class="mode-toggle auth-mode-toggle">
+              <button type="button" class="mode-button active" data-auth-mode="login">Login</button>
+              <button type="button" class="mode-button" data-auth-mode="register">Register</button>
+            </div>
             <form id="login-form" class="stack">
               <label>
                 <span>Username</span>
@@ -29,8 +59,13 @@
                 <span>Password</span>
                 <input type="password" name="password" autocomplete="current-password" required />
               </label>
-              <button type="submit">Enter Station</button>
+              <label id="login-confirm-password-row" class="hidden">
+                <span>Confirm Password</span>
+                <input type="password" name="confirmPassword" autocomplete="new-password" />
+              </label>
+              <button id="login-submit-button" type="submit">Enter Station</button>
             </form>
+            <p id="login-helper" class="panel-note">Use an existing account to sign in. New users can register directly.</p>
             <p id="login-error" class="error-text"></p>
           </div>
         </div>
@@ -41,12 +76,13 @@
           <div class="brand-block">
             <p class="eyebrow">Relay Station</p>
             <h2 id="user-name">User</h2>
+            <p class="brand-note">Private chat, queue-backed code jobs, and live routing control in one quiet workspace.</p>
           </div>
 
-          <div class="mode-toggle">
+          <div id="app-mode-toggle" class="mode-toggle app-mode-toggle">
             <button class="mode-button active" data-mode="chat">Chat Mode</button>
             <button class="mode-button" data-mode="code">Code Mode</button>
-            <button id="admin-mode-button" class="mode-button hidden" data-mode="admin">Admin</button>
+            <button id="admin-mode-button" class="mode-button" data-mode="admin">Control</button>
           </div>
 
           <div id="chat-list-panel" class="panel">
@@ -74,6 +110,7 @@
               <div class="panel-header">
                 <div class="chat-header-title">
                   <h3 id="chat-title">Select or create a conversation</h3>
+                  <p class="panel-note">Keep each chat isolated while switching providers and models in place.</p>
                   <div id="chat-conversation-actions" class="conversation-actions hidden">
                     <button id="chat-pin-button" type="button" class="ghost-button compact-button">Pin</button>
                     <button id="chat-delete-button" type="button" class="ghost-button compact-button danger-button">Delete</button>
@@ -109,7 +146,10 @@
             <div class="code-grid">
               <div class="panel hero-panel">
                 <div class="panel-header">
-                  <h3>Queue a code job</h3>
+                  <div class="chat-header-title">
+                    <h3>Queue a code job</h3>
+                    <p class="panel-note">Describe the work, attach context, and inspect logs and output artifacts as the queue advances.</p>
+                  </div>
                 </div>
                 <form id="code-form" class="composer code-composer">
                   <textarea id="code-input" rows="8" placeholder="Describe the task, script, automation, or implementation work..."></textarea>
@@ -150,6 +190,43 @@
                   <button id="admin-refresh-button" type="button" class="ghost-button compact-button">Refresh</button>
                 </div>
                 <div id="admin-summary" class="metric-cards"></div>
+
+                <div id="admin-users-section" class="admin-section hidden">
+                  <h4>User Management</h4>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>User</th>
+                          <th>Role</th>
+                          <th>Last Login</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody id="admin-users-table"></tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="admin-section">
+                  <h4>API Usage</h4>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>Provider</th>
+                          <th>Keys</th>
+                          <th>Success</th>
+                          <th>Failure</th>
+                          <th>Cooldown</th>
+                          <th>In Flight</th>
+                          <th>Last Used</th>
+                        </tr>
+                      </thead>
+                      <tbody id="admin-provider-usage-table"></tbody>
+                    </table>
+                  </div>
+                </div>
 
                 <div class="admin-section">
                   <h4>API Keys</h4>
@@ -222,7 +299,14 @@
                   </div>
                 </div>
 
-                <div class="admin-section">
+                <div id="admin-user-records-section" class="admin-section hidden">
+                  <h4 id="admin-user-records-title">User Conversations</h4>
+                  <div id="admin-user-conversations" class="admin-user-records empty-state">
+                    Select a user from the management table to inspect all of their chat records.
+                  </div>
+                </div>
+
+                <div id="admin-auth-section" class="admin-section hidden">
                   <h4>Authentication Audit</h4>
                   <div class="table-wrap">
                     <table class="data-table">

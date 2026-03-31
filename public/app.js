@@ -3,6 +3,7 @@ const state = {
   chat: null,
   capabilities: null,
   adminOverview: null,
+  authMode: "login",
   mode: "chat",
   conversations: [],
   selectedConversationId: null,
@@ -11,6 +12,9 @@ const state = {
   selectedJobId: null,
   selectedJob: null,
   selectedJobLogText: "",
+  adminSelectedUserId: null,
+  adminSelectedUser: null,
+  adminSelectedUserConversations: [],
   pendingChatAttachments: [],
   pendingCodeAttachments: [],
   chatRequestPending: false,
@@ -23,7 +27,11 @@ const JOB_POLL_INTERVAL_MS = 2000;
 const els = {
   loginScreen: document.getElementById("login-screen"),
   appScreen: document.getElementById("app-screen"),
+  authModeButtons: Array.from(document.querySelectorAll("#auth-mode-toggle [data-auth-mode]")),
   loginForm: document.getElementById("login-form"),
+  loginConfirmPasswordRow: document.getElementById("login-confirm-password-row"),
+  loginSubmitButton: document.getElementById("login-submit-button"),
+  loginHelper: document.getElementById("login-helper"),
   loginError: document.getElementById("login-error"),
   userName: document.getElementById("user-name"),
   chatListPanel: document.getElementById("chat-list-panel"),
@@ -42,7 +50,7 @@ const els = {
   chatAttachmentsInput: document.getElementById("chat-attachments-input"),
   chatAttachmentList: document.getElementById("chat-attachment-list"),
   chatSubmitButton: document.querySelector("#chat-form button[type='submit']"),
-  codeModeButton: document.querySelector('.mode-button[data-mode="code"]'),
+  codeModeButton: document.querySelector('#app-mode-toggle .mode-button[data-mode="code"]'),
   adminModeButton: document.getElementById("admin-mode-button"),
   codeForm: document.getElementById("code-form"),
   codeInput: document.getElementById("code-input"),
@@ -57,8 +65,8 @@ const els = {
   jobDeleteButton: document.getElementById("job-delete-button"),
   queuePill: document.getElementById("queue-pill"),
   logoutButton: document.getElementById("logout-button"),
-  modeToggle: document.querySelector(".mode-toggle"),
-  modeButtons: Array.from(document.querySelectorAll(".mode-button")),
+  modeToggle: document.getElementById("app-mode-toggle"),
+  modeButtons: Array.from(document.querySelectorAll("#app-mode-toggle [data-mode]")),
   modePanels: {
     chat: document.getElementById("chat-mode"),
     code: document.getElementById("code-mode"),
@@ -66,6 +74,13 @@ const els = {
   },
   adminRefreshButton: document.getElementById("admin-refresh-button"),
   adminSummary: document.getElementById("admin-summary"),
+  adminUsersSection: document.getElementById("admin-users-section"),
+  adminUsersTable: document.getElementById("admin-users-table"),
+  adminUserRecordsSection: document.getElementById("admin-user-records-section"),
+  adminUserRecordsTitle: document.getElementById("admin-user-records-title"),
+  adminUserConversations: document.getElementById("admin-user-conversations"),
+  adminAuthSection: document.getElementById("admin-auth-section"),
+  adminProviderUsageTable: document.getElementById("admin-provider-usage-table"),
   adminApiKeyTable: document.getElementById("admin-api-key-table"),
   adminAutoRoutingTable: document.getElementById("admin-auto-routing-table"),
   adminDispatchTable: document.getElementById("admin-dispatch-table"),
@@ -200,11 +215,38 @@ function scheduleMessagesRender() {
   });
 }
 
+function renderAuthMode() {
+  const registerMode = state.authMode === "register";
+  for (const button of els.authModeButtons) {
+    button.classList.toggle("active", button.dataset.authMode === state.authMode);
+  }
+  els.loginConfirmPasswordRow.classList.toggle("hidden", !registerMode);
+  els.loginForm.elements.password.setAttribute(
+    "autocomplete",
+    registerMode ? "new-password" : "current-password",
+  );
+  els.loginForm.elements.confirmPassword.toggleAttribute("required", registerMode);
+  els.loginSubmitButton.textContent = registerMode ? "Create Account" : "Enter Station";
+  els.loginHelper.textContent = registerMode
+    ? "Create a new account with a username, password, and one confirmation step."
+    : "Use an existing account to sign in. New users can register directly.";
+}
+
+function setAuthMode(mode) {
+  state.authMode = mode === "register" ? "register" : "login";
+  els.loginError.textContent = "";
+  renderAuthMode();
+}
+
 function showLogin() {
   state.me = null;
   state.adminOverview = null;
+  state.adminSelectedUserId = null;
+  state.adminSelectedUser = null;
+  state.adminSelectedUserConversations = [];
   els.loginScreen.classList.remove("hidden");
   els.appScreen.classList.add("hidden");
+  renderAuthMode();
 }
 
 function showApp() {
@@ -275,18 +317,12 @@ function renderIdentity() {
     return;
   }
 
-  els.userName.textContent = state.me.displayName;
-  const visibleModeCount = 1 + (state.me.canUseCode ? 1 : 0) + (state.me.isAdmin ? 1 : 0);
-  els.modeToggle.classList.toggle("chat-only", visibleModeCount === 1);
+  els.userName.textContent = state.me.displayName || state.me.username;
+  const visibleModeCount = 3;
+  els.modeToggle.classList.toggle("chat-only", false);
   els.modeToggle.style.gridTemplateColumns = `repeat(${visibleModeCount}, minmax(0, 1fr))`;
-  els.codeModeButton.classList.toggle("hidden", !state.me.canUseCode);
-  els.adminModeButton.classList.toggle("hidden", !state.me.isAdmin);
-  if (!state.me.canUseCode && state.mode === "code") {
-    setMode("chat");
-  }
-  if (!state.me.isAdmin && state.mode === "admin") {
-    setMode("chat");
-  }
+  els.codeModeButton.classList.remove("hidden");
+  els.adminModeButton.classList.remove("hidden");
 
   els.chatProviderSelect.innerHTML = "";
   els.chatModelSelect.innerHTML = "";
@@ -315,12 +351,6 @@ function renderIdentity() {
 }
 
 function setMode(mode) {
-  if (mode === "code" && !state.me?.canUseCode) {
-    mode = "chat";
-  }
-  if (mode === "admin" && !state.me?.isAdmin) {
-    mode = "chat";
-  }
   state.mode = mode;
   for (const button of els.modeButtons) {
     button.classList.toggle("active", button.dataset.mode === mode);
@@ -331,7 +361,7 @@ function setMode(mode) {
     panel.classList.toggle("hidden", key !== mode);
   });
 
-  if (mode === "admin" && state.me?.isAdmin) {
+  if (mode === "admin" && state.me) {
     refreshAdminOverview().catch(() => {});
   }
 }
@@ -652,22 +682,96 @@ function renderTableEmptyBody(element, colSpan, message) {
   element.innerHTML = `<tr><td colspan="${colSpan}" class="table-empty">${escapeHtml(message)}</td></tr>`;
 }
 
-function renderAdminOverview() {
-  const overview = state.adminOverview;
+function renderAdminUserRecords() {
   if (!state.me?.isAdmin) {
     return;
   }
 
+  if (!state.adminSelectedUser) {
+    els.adminUserRecordsTitle.textContent = "User Conversations";
+    els.adminUserConversations.className = "admin-user-records empty-state";
+    els.adminUserConversations.textContent =
+      "Select a user from the management table to inspect all of their chat records.";
+    return;
+  }
+
+  els.adminUserRecordsTitle.textContent = `User Conversations · ${state.adminSelectedUser.displayName} (${state.adminSelectedUser.username})`;
+
+  if (!state.adminSelectedUserConversations.length) {
+    els.adminUserConversations.className = "admin-user-records empty-state";
+    els.adminUserConversations.textContent = "This user has no chat history.";
+    return;
+  }
+
+  els.adminUserConversations.className = "admin-user-records";
+  els.adminUserConversations.innerHTML = state.adminSelectedUserConversations
+    .map(
+      (conversation) => `
+        <article class="admin-record-card">
+          <div class="admin-record-header">
+            <div>
+              <h5>${escapeHtml(conversation.title)}</h5>
+              <p>${escapeHtml(formatDateTime(conversation.updatedAt))}</p>
+            </div>
+            <span>${escapeHtml(String(conversation.messages?.length || 0))} msgs</span>
+          </div>
+          <div class="admin-record-stream">
+            ${
+              conversation.messages?.length
+                ? conversation.messages
+                    .map((message) => {
+                      const attachmentText = message.attachments?.length
+                        ? `<div class="table-subline">Attachments: ${escapeHtml(message.attachments.map((attachment) => attachment.label || attachment.name).join(", "))}</div>`
+                        : "";
+                      return `
+                        <div class="admin-record-message ${escapeHtml(message.role)}">
+                          <div class="admin-record-meta">
+                            <strong>${escapeHtml(message.role)}</strong>
+                            <span>${escapeHtml(formatDateTime(message.createdAt))}</span>
+                            ${message.model ? `<span>${escapeHtml(message.model)}</span>` : ""}
+                          </div>
+                          <pre>${escapeHtml(message.content || "")}</pre>
+                          ${attachmentText}
+                        </div>
+                      `;
+                    })
+                    .join("")
+                : '<div class="table-empty">No messages recorded.</div>'
+            }
+          </div>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function renderAdminOverview() {
+  const overview = state.adminOverview;
+  if (!state.me) {
+    return;
+  }
+
+  const isAdmin = Boolean(state.me.isAdmin);
+  els.adminUsersSection.classList.toggle("hidden", !isAdmin);
+  els.adminUserRecordsSection.classList.toggle("hidden", !isAdmin);
+  els.adminAuthSection.classList.toggle("hidden", !isAdmin);
+
   if (!overview) {
     els.adminSummary.innerHTML = "";
+    renderTableEmptyBody(els.adminProviderUsageTable, 7, "No API usage data loaded.");
     renderTableEmptyBody(els.adminApiKeyTable, 9, "No admin data loaded.");
     renderTableEmptyBody(els.adminAutoRoutingTable, 6, "No auto routing data loaded.");
     renderTableEmptyBody(els.adminDispatchTable, 8, "No dispatch events yet.");
-    renderTableEmptyBody(els.adminAuthTable, 5, "No authentication audit events yet.");
+    if (isAdmin) {
+      renderTableEmptyBody(els.adminUsersTable, 4, "No users loaded.");
+      renderTableEmptyBody(els.adminAuthTable, 5, "No authentication audit events yet.");
+      renderAdminUserRecords();
+    }
     return;
   }
 
   const summary = overview.summary || {};
+  const usage = overview.apiUsage || {};
   els.adminSummary.innerHTML = `
     <article class="metric-card">
       <span>Configured Providers</span>
@@ -678,6 +782,26 @@ function renderAdminOverview() {
       <strong>${escapeHtml(String(summary.configuredApiKeys || 0))}</strong>
     </article>
     <article class="metric-card">
+      <span>API Successes</span>
+      <strong>${escapeHtml(String(usage.totalSuccessCount || 0))}</strong>
+    </article>
+    <article class="metric-card">
+      <span>API Failures</span>
+      <strong>${escapeHtml(String(usage.totalFailureCount || 0))}</strong>
+    </article>
+    <article class="metric-card">
+      <span>Recent Dispatches</span>
+      <strong>${escapeHtml(String(usage.recentDispatches || 0))}</strong>
+    </article>
+    <article class="metric-card">
+      <span>Active Users</span>
+      <strong>${escapeHtml(String(usage.activeUsers || 0))}</strong>
+    </article>
+    <article class="metric-card">
+      <span>Cooldown Keys</span>
+      <strong>${escapeHtml(String(usage.cooldownKeys || 0))}</strong>
+    </article>
+    <article class="metric-card">
       <span>Users</span>
       <strong>${escapeHtml(String(summary.users || 0))}</strong>
     </article>
@@ -686,6 +810,26 @@ function renderAdminOverview() {
       <strong>${escapeHtml(`${summary.queue?.running || 0}/${summary.queue?.concurrency || 0}`)}</strong>
     </article>
   `;
+
+  if (!usage.providerBreakdown?.length) {
+    renderTableEmptyBody(els.adminProviderUsageTable, 7, "No API usage recorded yet.");
+  } else {
+    els.adminProviderUsageTable.innerHTML = usage.providerBreakdown
+      .map(
+        (provider) => `
+          <tr>
+            <td>${escapeCell(provider.providerLabel)}</td>
+            <td>${escapeCell(provider.keyCount)}</td>
+            <td>${escapeCell(provider.successCount)}</td>
+            <td>${escapeCell(provider.failureCount)}</td>
+            <td>${escapeCell(provider.cooldownKeys)}</td>
+            <td>${escapeCell(provider.inFlight)}</td>
+            <td>${escapeCell(provider.lastUsedAt ? formatDateTime(provider.lastUsedAt) : "—")}</td>
+          </tr>
+        `,
+      )
+      .join("");
+  }
 
   if (!overview.apiKeys?.length) {
     renderTableEmptyBody(els.adminApiKeyTable, 9, "No API keys configured.");
@@ -758,27 +902,73 @@ function renderAdminOverview() {
       .join("");
   }
 
-  if (!overview.authEvents?.length) {
-    renderTableEmptyBody(els.adminAuthTable, 5, "No authentication audit events recorded yet.");
-  } else {
-    els.adminAuthTable.innerHTML = overview.authEvents
-      .map(
-        (event) => `
-          <tr>
-            <td>${escapeCell(formatDateTime(event.createdAt))}</td>
-            <td>${escapeCell(event.username)}</td>
-            <td>${escapeCell(event.eventType)}</td>
-            <td>${escapeCell(event.ipAddress)}</td>
-            <td>${escapeCell(event.reason)}</td>
-          </tr>
-        `,
-      )
-      .join("");
+  if (isAdmin) {
+    if (!overview.users?.length) {
+      renderTableEmptyBody(els.adminUsersTable, 4, "No users found.");
+    } else {
+      els.adminUsersTable.innerHTML = overview.users
+        .map((user) => {
+          const protectedUser = user.username === "root" || user.id === state.me.id;
+          return `
+            <tr>
+              <td>
+                <strong>${escapeCell(user.displayName)}</strong>
+                <div class="table-subline">${escapeCell(user.username)}</div>
+              </td>
+              <td>${escapeCell(user.isAdmin ? "admin" : "member")}</td>
+              <td>${escapeCell(user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "Never")}</td>
+              <td>
+                <div class="admin-user-actions">
+                  <button type="button" class="ghost-button compact-button" data-action="chats" data-user-id="${escapeHtml(user.id)}">Chats</button>
+                  <button type="button" class="ghost-button compact-button" data-action="password" data-user-id="${escapeHtml(user.id)}" data-username="${escapeHtml(user.username)}">Password</button>
+                  <button
+                    type="button"
+                    class="ghost-button compact-button"
+                    data-action="role"
+                    data-user-id="${escapeHtml(user.id)}"
+                    data-is-admin="${user.isAdmin ? "1" : "0"}"
+                    ${protectedUser ? "disabled" : ""}
+                  >${user.isAdmin ? "Revoke Admin" : "Make Admin"}</button>
+                  <button
+                    type="button"
+                    class="ghost-button compact-button danger-button"
+                    data-action="delete"
+                    data-user-id="${escapeHtml(user.id)}"
+                    data-username="${escapeHtml(user.username)}"
+                    ${protectedUser ? "disabled" : ""}
+                  >Delete</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        })
+        .join("");
+    }
+
+    if (!overview.authEvents?.length) {
+      renderTableEmptyBody(els.adminAuthTable, 5, "No authentication audit events recorded yet.");
+    } else {
+      els.adminAuthTable.innerHTML = overview.authEvents
+        .map(
+          (event) => `
+            <tr>
+              <td>${escapeCell(formatDateTime(event.createdAt))}</td>
+              <td>${escapeCell(event.username)}</td>
+              <td>${escapeCell(event.eventType)}</td>
+              <td>${escapeCell(event.ipAddress)}</td>
+              <td>${escapeCell(event.reason)}</td>
+            </tr>
+          `,
+        )
+        .join("");
+    }
+
+    renderAdminUserRecords();
   }
 }
 
 async function refreshAdminOverview() {
-  if (!state.me?.isAdmin) {
+  if (!state.me) {
     state.adminOverview = null;
     renderAdminOverview();
     return;
@@ -800,26 +990,12 @@ async function bootstrap() {
     state.chat.selectedProviderId = validStoredProvider?.id || payload.chat.defaultProviderId || "";
     renderIdentity();
     showApp();
-    if (state.mode === "code" && !state.me.canUseCode) {
-      state.mode = "chat";
-    }
-    if (state.mode === "admin" && !state.me.isAdmin) {
-      state.mode = "chat";
-    }
     setMode(state.mode);
     renderPendingAttachmentList("chat");
     renderPendingAttachmentList("code");
     await refreshConversations();
-    if (state.me.canUseCode) {
-      await refreshJobs();
-    } else {
-      state.jobs = [];
-      state.selectedJobId = null;
-      state.selectedJob = null;
-      renderJobs();
-      renderJobDetail();
-    }
-    if (state.me.isAdmin) {
+    await refreshJobs();
+    if (state.mode === "admin") {
       await refreshAdminOverview();
     } else {
       state.adminOverview = null;
@@ -1084,20 +1260,58 @@ async function deleteJob(jobId) {
   await refreshJobs();
 }
 
+async function updateAdminUser(userId, payload) {
+  await api(`/api/admin/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  await refreshAdminOverview();
+  if (state.adminSelectedUserId === userId) {
+    await loadAdminUserConversations(userId);
+  }
+}
+
+async function deleteAdminUser(userId) {
+  await api(`/api/admin/users/${userId}`, {
+    method: "DELETE",
+  });
+  if (state.adminSelectedUserId === userId) {
+    state.adminSelectedUserId = null;
+    state.adminSelectedUser = null;
+    state.adminSelectedUserConversations = [];
+  }
+  await refreshAdminOverview();
+}
+
+async function loadAdminUserConversations(userId) {
+  const payload = await api(`/api/admin/users/${userId}/conversations`);
+  state.adminSelectedUserId = userId;
+  state.adminSelectedUser = payload.user;
+  state.adminSelectedUserConversations = payload.conversations || [];
+  renderAdminUserRecords();
+}
+
 els.loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   els.loginError.textContent = "";
   const formData = new FormData(els.loginForm);
+  const password = String(formData.get("password") || "");
+  const confirmPassword = String(formData.get("confirmPassword") || "");
 
   try {
-    await api("/api/auth/login", {
+    if (state.authMode === "register" && password !== confirmPassword) {
+      throw new Error("Passwords do not match.");
+    }
+
+    await api(state.authMode === "register" ? "/api/auth/register" : "/api/auth/login", {
       method: "POST",
       body: JSON.stringify({
         username: formData.get("username"),
-        password: formData.get("password"),
+        password,
       }),
     });
     els.loginForm.reset();
+    setAuthMode("login");
     await bootstrap();
   } catch (error) {
     els.loginError.textContent = error.message;
@@ -1116,6 +1330,49 @@ els.adminRefreshButton?.addEventListener("click", async () => {
   await refreshAdminOverview().catch((error) => {
     window.alert(error.message);
   });
+});
+
+els.adminUsersTable?.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button) {
+    return;
+  }
+
+  const userId = button.dataset.userId;
+  const action = button.dataset.action;
+  const username = button.dataset.username || "user";
+  const isAdmin = button.dataset.isAdmin === "1";
+
+  try {
+    if (action === "chats") {
+      await loadAdminUserConversations(userId);
+      return;
+    }
+    if (action === "password") {
+      const nextPassword = window.prompt(`Set a new password for ${username}:`, "");
+      if (nextPassword === null) {
+        return;
+      }
+      await updateAdminUser(userId, {
+        password: nextPassword,
+      });
+      return;
+    }
+    if (action === "role") {
+      await updateAdminUser(userId, {
+        isAdmin: !isAdmin,
+      });
+      return;
+    }
+    if (action === "delete") {
+      if (!window.confirm(`Delete user "${username}" and all of their data?`)) {
+        return;
+      }
+      await deleteAdminUser(userId);
+    }
+  } catch (error) {
+    window.alert(error.message);
+  }
 });
 
 els.newChatButton.addEventListener("click", async () => {
@@ -1252,6 +1509,10 @@ for (const button of els.modeButtons) {
   button.addEventListener("click", () => setMode(button.dataset.mode));
 }
 
+for (const button of els.authModeButtons) {
+  button.addEventListener("click", () => setAuthMode(button.dataset.authMode));
+}
+
 setInterval(() => {
   if (document.visibilityState === "hidden") {
     return;
@@ -1259,9 +1520,10 @@ setInterval(() => {
   if (state.me?.canUseCode) {
     refreshJobs().catch(() => {});
   }
-  if (state.me?.isAdmin && state.mode === "admin") {
+  if (state.me && state.mode === "admin") {
     refreshAdminOverview().catch(() => {});
   }
 }, JOB_POLL_INTERVAL_MS);
 
+renderAuthMode();
 bootstrap();

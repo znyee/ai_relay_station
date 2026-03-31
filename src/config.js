@@ -4,7 +4,7 @@ import { buildChatProviders } from "./chat-providers.js";
 
 export function loadConfig() {
   const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-  const dataDir = path.join(rootDir, "data");
+  const dataDir = process.env.DATA_DIR || path.join(rootDir, "data");
   const publicDir = path.join(rootDir, "public");
   const workspaceRoot =
     process.env.WORKSPACE_ROOT ||
@@ -50,7 +50,7 @@ export function loadConfig() {
     autoChatCircuitBreakerThreshold: Number(process.env.AUTO_CHAT_CIRCUIT_BREAKER_THRESHOLD || 3),
     autoChatCircuitBreakerMs: Number(process.env.AUTO_CHAT_CIRCUIT_BREAKER_MS || 10 * 60 * 1000),
     adminDispatchHistoryLimit: Number(process.env.ADMIN_DISPATCH_HISTORY_LIMIT || 200),
-    authMinPasswordLength: Number(process.env.AUTH_MIN_PASSWORD_LENGTH || 12),
+    authMinPasswordLength: Number(process.env.AUTH_MIN_PASSWORD_LENGTH || 6),
     authMaxFailedAttempts: Number(process.env.AUTH_MAX_FAILED_ATTEMPTS || 5),
     authLockoutMinutes: Number(process.env.AUTH_LOCKOUT_MINUTES || 15),
     initialRepoUrl: process.env.INITIAL_REPO_URL || "https://github.com/znyee/owner-mcq.git",
@@ -58,6 +58,7 @@ export function loadConfig() {
     rootAdminUsername: process.env.ROOT_ADMIN_USERNAME || "root",
     rootAdminDisplayName: process.env.ROOT_ADMIN_DISPLAY_NAME || "Root Admin",
     rootAdminPassword: process.env.ROOT_ADMIN_PASSWORD || "",
+    rootAdminAllowWeakPassword: process.env.ROOT_ADMIN_ALLOW_WEAK_PASSWORD === "1",
     rootAdminRepoUrl: process.env.ROOT_ADMIN_REPO_URL || "",
     rootAdminRepoPath: process.env.ROOT_ADMIN_REPO_PATH || "",
     rootAdminRepoBranch: process.env.ROOT_ADMIN_REPO_BRANCH || "main",

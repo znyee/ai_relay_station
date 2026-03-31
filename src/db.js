@@ -204,6 +204,7 @@ export function createDatabase(databasePath) {
     getUserByUsername: db.prepare(`SELECT * FROM users WHERE username = ?`),
     getUserById: db.prepare(`SELECT * FROM users WHERE id = ?`),
     listUsers: db.prepare(`SELECT * FROM users ORDER BY created_at ASC`),
+    deleteUser: db.prepare(`DELETE FROM users WHERE id = ?`),
     insertSession: db.prepare(`
       INSERT INTO sessions (id, user_id, expires_at, created_at, user_agent, ip_address, last_seen_at)
       VALUES (@id, @user_id, @expires_at, @created_at, @user_agent, @ip_address, @last_seen_at)
@@ -439,6 +440,10 @@ export function createDatabase(databasePath) {
 
     getUserById(userId) {
       return parseRow(statements.getUserById.get(userId));
+    },
+
+    deleteUser(userId) {
+      return statements.deleteUser.run(userId).changes > 0;
     },
 
     createSession({ userId, expiresAt, userAgent = "", ipAddress = "" }) {

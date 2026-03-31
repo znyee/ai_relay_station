@@ -21,18 +21,9 @@ export function verifyPassword(password, hash) {
 
 export function validatePasswordStrength(password, options = {}) {
   const value = String(password || "");
-  const minLength = Math.max(8, Number(options.minLength || 12));
+  const minLength = Math.max(6, Number(options.minLength || 6));
   if (value.length < minLength) {
     return `Password must be at least ${minLength} characters long.`;
-  }
-  if (!/[a-z]/.test(value)) {
-    return "Password must contain a lowercase letter.";
-  }
-  if (!/[A-Z]/.test(value)) {
-    return "Password must contain an uppercase letter.";
-  }
-  if (!/[0-9]/.test(value)) {
-    return "Password must contain a number.";
   }
   return "";
 }

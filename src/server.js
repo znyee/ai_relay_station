@@ -19,6 +19,7 @@ import {
   verifyPassword,
   verifySessionCookie,
 } from "./security.js";
+import { summarizeApiUsage, validateConfiguredRootAdminPassword } from "./admin-utils.js";
 import { createChatService } from "./chat-service.js";
 import { createJobQueue } from "./job-queue.js";
 import { buildChatGeneratedFiles } from "./generated-files.js";
@@ -142,6 +143,15 @@ function normalizeUsername(value) {
   return String(value || "").trim().toLowerCase().slice(0, 64);
 }
 
+function normalizeDisplayName(value, fallback = "") {
+  const text = String(value || "").trim().slice(0, 80);
+  return text || fallback;
+}
+
+function userCanUseCode() {
+  return true;
+}
+
 function clientIp(req) {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.trim()) {
@@ -200,6 +210,21 @@ async function sendAttachmentFile(res, attachment) {
   res.send(body);
 }
 
+function issueSession(res, user, { ipAddress = "", userAgent = "" } = {}) {
+  const expiresAt = new Date(Date.now() + config.sessionTtlHours * 60 * 60 * 1000).toISOString();
+  const session = db.createSession({
+    userId: user.id,
+    expiresAt,
+    ipAddress,
+    userAgent,
+  });
+
+  res.setHeader(
+    "Set-Cookie",
+    `${config.sessionCookieName}=${createSessionCookie(session, config.sessionSecret)}; ${sessionCookieOptions(config.sessionTtlHours)}`,
+  );
+}
+
 async function getAuthContext(req) {
   db.deleteExpiredSessions();
   const cookies = parseCookies(req.headers.cookie);
@@ -256,7 +281,7 @@ function serializeUser(user) {
     id: user.id,
     username: user.username,
     displayName: user.display_name,
-    canUseCode: Boolean(user.canUseCode),
+    canUseCode: userCanUseCode(user),
     isAdmin: Boolean(user.isAdmin),
     failedLoginAttempts: Number(user.failedLoginAttempts || 0),
     lockedUntil: user.locked_until || "",
@@ -269,9 +294,6 @@ async function requireCodeAccess(req, res, next) {
   const context = await getAuthContext(req);
   if (!context?.user) {
     return jsonError(res, 401, "Authentication required.");
-  }
-  if (!context.user.canUseCode) {
-    return jsonError(res, 403, "This account cannot use Code mode.");
   }
   req.user = context.user;
   req.authSession = context.session;
@@ -296,6 +318,40 @@ function serializeAdminUser(user) {
     ...serializeUser(user),
     repoUrl: user.repo_url,
     repoLocalPath: user.repo_local_path,
+  };
+}
+
+function serializeDispatchEventForViewer(event, viewer) {
+  if (viewer?.isAdmin) {
+    return event;
+  }
+
+  const username =
+    event.userId && viewer?.id && event.userId === viewer.id
+      ? "you"
+      : event.username
+        ? "another user"
+        : "";
+
+  return {
+    ...event,
+    username,
+  };
+}
+
+function adminMessagePayload(message) {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    model: message.model,
+    createdAt: message.created_at,
+    attachments: (message.attachments || []).map((attachment) => ({
+      id: attachment.id,
+      name: attachment.name,
+      label: attachment.label || attachment.name,
+      kind: attachment.kind,
+    })),
   };
 }
 
@@ -364,6 +420,57 @@ app.get("/api/health", (_req, res) => {
     time: nowIso(),
     queue: jobQueue.stats(),
     chatConfigured: chatService.isConfigured(),
+  });
+});
+
+app.post("/api/auth/register", async (req, res) => {
+  const username = normalizeUsername(req.body?.username);
+  const password = String(req.body?.password || "");
+  const displayName = username;
+  const ipAddress = clientIp(req);
+  const userAgent = String(req.headers["user-agent"] || "");
+
+  if (!username) {
+    return jsonError(res, 400, "Username is required.");
+  }
+  if (db.getUserByUsername(username)) {
+    return jsonError(res, 409, "Username is already taken.");
+  }
+
+  const passwordError = passwordPolicyError(password);
+  if (passwordError) {
+    return jsonError(res, 400, passwordError);
+  }
+
+  const defaults = defaultChatSelection();
+  const user = db.createUser({
+    username,
+    passwordHash: hashPassword(password),
+    displayName,
+    repoUrl: "",
+    repoLocalPath: "",
+    repoDefaultBranch: "main",
+    chatModel: defaults.chatModel,
+    allowedModels: defaults.allowedModels,
+    canUseCode: true,
+    isAdmin: false,
+  });
+
+  db.recordAuthEvent({
+    userId: user.id,
+    username,
+    eventType: "register",
+    reason: "self_service",
+    ipAddress,
+    userAgent,
+  });
+  issueSession(res, user, {
+    ipAddress,
+    userAgent,
+  });
+
+  res.status(201).json({
+    user: serializeUser(user),
   });
 });
 
@@ -438,18 +545,10 @@ app.post("/api/auth/login", async (req, res) => {
     userAgent,
   });
 
-  const expiresAt = new Date(Date.now() + config.sessionTtlHours * 60 * 60 * 1000).toISOString();
-  const session = db.createSession({
-    userId: user.id,
-    expiresAt,
+  issueSession(res, authenticatedUser, {
     ipAddress,
     userAgent,
   });
-
-  res.setHeader(
-    "Set-Cookie",
-    `${config.sessionCookieName}=${createSessionCookie(session, config.sessionSecret)}; ${sessionCookieOptions(config.sessionTtlHours)}`,
-  );
   res.json({
     user: serializeUser(authenticatedUser),
   });
@@ -484,26 +583,121 @@ app.get("/api/me", requireAuth, async (req, res) => {
       defaultProviderId: chatService.defaultProviderId(),
     },
     capabilities: {
-      code: Boolean(req.user.canUseCode),
+      code: userCanUseCode(req.user),
       admin: Boolean(req.user.isAdmin),
     },
     queue: jobQueue.stats(),
   });
 });
 
-app.get("/api/admin/overview", requireAdmin, async (req, res) => {
+app.get("/api/admin/overview", requireAuth, async (req, res) => {
+  const apiKeys = chatService.listApiKeys();
+  const dispatchEvents = chatService.listDispatchEvents(150);
+  const isAdmin = Boolean(req.user.isAdmin);
   res.json({
     summary: {
       users: db.listUsers().length,
       queue: jobQueue.stats(),
       configuredProviders: chatService.listProviders().length,
-      configuredApiKeys: chatService.listApiKeys().length,
+      configuredApiKeys: apiKeys.length,
     },
-    users: db.listUsers().map(serializeAdminUser),
-    authEvents: db.listAuthAuditEvents(100),
-    apiKeys: chatService.listApiKeys(),
-    dispatchEvents: chatService.listDispatchEvents(150),
+    apiUsage: summarizeApiUsage(apiKeys, dispatchEvents),
+    users: isAdmin ? db.listUsers().map(serializeAdminUser) : [],
+    authEvents: isAdmin ? db.listAuthAuditEvents(100) : [],
+    apiKeys,
+    dispatchEvents: dispatchEvents.map((event) => serializeDispatchEventForViewer(event, req.user)),
     autoRouting: chatService.describeAutoRouting(),
+  });
+});
+
+app.patch("/api/admin/users/:userId", requireAdmin, async (req, res) => {
+  const target = db.getUserById(req.params.userId);
+  if (!target) {
+    return jsonError(res, 404, "User not found.");
+  }
+
+  const nextDisplayName =
+    req.body?.displayName !== undefined
+      ? normalizeDisplayName(req.body?.displayName, target.display_name)
+      : target.display_name;
+  const nextIsAdmin =
+    typeof req.body?.isAdmin === "boolean"
+      ? req.body.isAdmin
+      : Boolean(target.isAdmin);
+  const nextPassword = req.body?.password !== undefined ? String(req.body.password || "") : null;
+
+  if (!nextIsAdmin && (target.id === req.user.id || target.username === config.rootAdminUsername)) {
+    return jsonError(res, 400, "This administrator account cannot be demoted.");
+  }
+  if (nextPassword !== null) {
+    const passwordError = passwordPolicyError(nextPassword);
+    if (passwordError) {
+      return jsonError(res, 400, passwordError);
+    }
+  }
+
+  const updated = db.updateUser({
+    id: target.id,
+    passwordHash: nextPassword !== null ? hashPassword(nextPassword) : null,
+    displayName: nextDisplayName,
+    repoUrl: target.repo_url,
+    repoLocalPath: target.repo_local_path,
+    repoDefaultBranch: target.repo_default_branch,
+    chatModel: target.chat_model,
+    allowedModels: target.allowedModels,
+    canUseCode: true,
+    isAdmin: nextIsAdmin,
+  });
+
+  if (nextPassword !== null) {
+    db.markLoginFailure(target.id, {
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+    });
+  }
+
+  res.json({
+    user: serializeAdminUser(updated),
+  });
+});
+
+app.delete("/api/admin/users/:userId", requireAdmin, async (req, res) => {
+  const target = db.getUserById(req.params.userId);
+  if (!target) {
+    return jsonError(res, 404, "User not found.");
+  }
+  if (target.id === req.user.id || target.username === config.rootAdminUsername) {
+    return jsonError(res, 400, "This administrator account cannot be deleted.");
+  }
+
+  db.deleteUser(target.id);
+
+  await Promise.all([
+    fs.rm(joinPath(config.uploadsRoot, "chat", target.id), { recursive: true, force: true }),
+    fs.rm(joinPath(config.uploadsRoot, "chat-generated", target.id), { recursive: true, force: true }),
+    fs.rm(joinPath(config.uploadsRoot, "code", target.id), { recursive: true, force: true }),
+    fs.rm(joinPath(config.uploadsRoot, "code-generated", target.id), { recursive: true, force: true }),
+    fs.rm(joinPath(config.workspaceRoot, target.id), { recursive: true, force: true }),
+    fs.rm(joinPath(config.runsRoot, target.id), { recursive: true, force: true }),
+  ]);
+
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/users/:userId/conversations", requireAdmin, async (req, res) => {
+  const target = db.getUserById(req.params.userId);
+  if (!target) {
+    return jsonError(res, 404, "User not found.");
+  }
+
+  const conversations = db.listConversations(target.id).map((conversation) => ({
+    ...conversationPayload(conversation),
+    messages: db.listMessages(conversation.id).map(adminMessagePayload),
+  }));
+
+  res.json({
+    user: serializeAdminUser(target),
+    conversations,
   });
 });
 
@@ -891,29 +1085,72 @@ function assertStrongPassword(password, label) {
   }
 }
 
+function validateRootAdminPassword(password) {
+  const warning = validateConfiguredRootAdminPassword(password, {
+    minLength: config.authMinPasswordLength,
+    allowWeakPassword: config.rootAdminAllowWeakPassword,
+  });
+  if (warning) {
+    console.warn(
+      `Warning: accepting weak root admin password because ROOT_ADMIN_ALLOW_WEAK_PASSWORD=1. ${warning}`,
+    );
+  }
+}
+
 async function ensureRootAdminUser() {
   const existing = db.getUserByUsername(config.rootAdminUsername);
   const defaults = defaultChatSelection();
+  const configuredRootPassword = String(config.rootAdminPassword || "").trim();
+
+  if (configuredRootPassword) {
+    validateRootAdminPassword(configuredRootPassword);
+  }
 
   if (existing) {
+    let needsUpdate = false;
+    let passwordChanged = false;
+    const updateInput = {
+      id: existing.id,
+      displayName: existing.display_name,
+      repoUrl: existing.repo_url,
+      repoLocalPath: existing.repo_local_path,
+      repoDefaultBranch: existing.repo_default_branch,
+      chatModel: existing.chat_model,
+      allowedModels: existing.allowedModels,
+      canUseCode: true,
+      isAdmin: true,
+    };
+
     if (!existing.isAdmin) {
+      needsUpdate = true;
+    }
+
+    if (configuredRootPassword && !verifyPassword(configuredRootPassword, existing.password_hash)) {
+      updateInput.passwordHash = hashPassword(configuredRootPassword);
+      needsUpdate = true;
+      passwordChanged = true;
+    }
+
+    if (needsUpdate) {
       db.updateUser({
-        id: existing.id,
-        displayName: existing.display_name,
-        repoUrl: existing.repo_url,
-        repoLocalPath: existing.repo_local_path,
-        repoDefaultBranch: existing.repo_default_branch,
-        chatModel: existing.chat_model,
-        allowedModels: existing.allowedModels,
-        canUseCode: Boolean(existing.canUseCode),
-        isAdmin: true,
+        ...updateInput,
       });
+    }
+
+    if (!existing.isAdmin) {
       console.log(`Promoted ${config.rootAdminUsername} to administrator.`);
+    }
+    if (passwordChanged) {
+      db.markLoginFailure(existing.id, {
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      });
+      console.log(`Synchronized password for root admin user ${config.rootAdminUsername}.`);
     }
     return;
   }
 
-  let rootPassword = String(config.rootAdminPassword || "").trim();
+  let rootPassword = configuredRootPassword;
   let wroteCredentialFile = false;
   if (!rootPassword) {
     rootPassword = generateStrongPassword(20);
@@ -925,7 +1162,7 @@ async function ensureRootAdminUser() {
     wroteCredentialFile = true;
   }
 
-  assertStrongPassword(rootPassword, "Root admin password:");
+  validateRootAdminPassword(rootPassword);
 
   db.createUser({
     username: config.rootAdminUsername,
@@ -936,7 +1173,7 @@ async function ensureRootAdminUser() {
     repoDefaultBranch: config.rootAdminRepoBranch,
     chatModel: defaults.chatModel,
     allowedModels: defaults.allowedModels,
-    canUseCode: false,
+    canUseCode: true,
     isAdmin: true,
   });
 
@@ -968,7 +1205,7 @@ async function maybeBootstrapDefaultUser() {
     repoDefaultBranch: process.env.BOOTSTRAP_REPO_BRANCH || "main",
     chatModel: bootstrapProvider.chatModel,
     allowedModels: bootstrapProvider.allowedModels,
-    canUseCode: process.env.BOOTSTRAP_CODE_ENABLED === "1",
+    canUseCode: true,
     isAdmin: false,
   });
   console.log("Bootstrapped default user.");

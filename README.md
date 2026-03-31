@@ -72,17 +72,21 @@ http://127.0.0.1:3210
 
 ### Authentication and admin
 
+- Users can self-register from the login screen with `username + password + confirm password`
 - Passwords use scrypt hashing and must satisfy the configured minimum policy
 - Accounts are temporarily locked after repeated failed login attempts
 - Sessions record client IP and user agent metadata
-- The built-in `root` administrator can open the Admin view and inspect:
+- All authenticated users can open the Control view and inspect API routing health, queue status, and recent dispatch activity
+- The built-in `root` administrator can additionally inspect:
   - API key health and cooldown state
   - auto-routing plans
   - recent dispatch attempts and auth audit events
+  - user accounts, roles, and recorded conversation history
 
 ### Code mode
 
 - Creates a new job row in SQLite
+- Is available to every authenticated user
 - Clones the bound repo into `data/workspaces/<user>/<job>/repo`
 - Copies uploaded job attachments into `.relay-attachments/` inside the workspace
 - Runs `codex exec --dangerously-bypass-approvals-and-sandbox --ephemeral`
