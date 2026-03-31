@@ -39,9 +39,16 @@ await ensureDir(config.runsRoot);
 await ensureDir(config.uploadsRoot);
 await ensureDir(config.uploadsTempRoot);
 const ROUTING_CONFIG_SETTING_KEY = "routing_config";
+const CHAT_RUNTIME_STATE_SETTING_KEY = "chat_runtime_state";
 
 const db = createDatabase(config.databasePath);
-const chatService = createChatService(config);
+const savedChatRuntimeState = db.getSetting(CHAT_RUNTIME_STATE_SETTING_KEY, null);
+const chatService = createChatService(config, {
+  runtimeState: savedChatRuntimeState,
+  onRuntimeStateChange(runtimeState) {
+    db.setSetting(CHAT_RUNTIME_STATE_SETTING_KEY, runtimeState);
+  },
+});
 const savedRoutingConfig = db.getSetting(ROUTING_CONFIG_SETTING_KEY, null);
 if (savedRoutingConfig) {
   chatService.setRoutingConfig(savedRoutingConfig);
@@ -546,16 +553,19 @@ function serializeDispatchEventForViewer(event, viewer) {
     return event;
   }
 
-  const username =
-    event.userId && viewer?.id && event.userId === viewer.id
-      ? "you"
-      : event.username
-        ? "another user"
-        : "";
-
   return {
-    ...event,
-    username,
+    id: event.id,
+    createdAt: event.createdAt,
+    routeType: event.routeType,
+    requestKind: event.requestKind,
+    providerId: event.providerId,
+    providerLabel: event.providerLabel,
+    apiKeyName: event.apiKeyId ? "shared pool" : "route",
+    model: event.model,
+    username: event.userId && viewer?.id && event.userId === viewer.id ? "you" : event.username ? "another user" : "",
+    status: event.status,
+    durationMs: event.durationMs,
+    error: event.error ? "Request failed." : "",
   };
 }
 
@@ -830,9 +840,9 @@ app.get("/api/admin/overview", requireAuth, async (req, res) => {
     apiUsage: summarizeApiUsage(apiKeys, dispatchEvents),
     users: isAdmin ? db.listUsers().map(serializeAdminUserWithStats) : [],
     authEvents: isAdmin ? db.listAuthAuditEvents(100) : [],
-    apiKeys,
+    apiKeys: isAdmin ? apiKeys : [],
     dispatchEvents: dispatchEvents.map((event) => serializeDispatchEventForViewer(event, req.user)),
-    autoRouting: chatService.describeAutoRouting(),
+    autoRouting: isAdmin ? chatService.describeAutoRouting() : null,
     routingConfig: isAdmin ? chatService.getRoutingConfig() : null,
   });
 });

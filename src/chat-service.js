@@ -439,6 +439,29 @@ function createEmptyKeyState() {
   };
 }
 
+function normalizeCount(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return Math.max(0, fallback);
+  }
+  return Math.max(0, Math.round(parsed));
+}
+
+function normalizeTimestampMs(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return Math.max(0, fallback);
+  }
+  return Math.max(0, Math.round(parsed));
+}
+
+function normalizeText(value, fallback = "") {
+  if (value == null) {
+    return fallback;
+  }
+  return String(value);
+}
+
 function normalizePriority(value, fallback = 100) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -472,7 +495,9 @@ function routeId(routeType, providerId, model) {
   return `${routeType}:${providerId}:${model}`;
 }
 
-export function createChatService(config) {
+export function createChatService(config, options = {}) {
+  const onRuntimeStateChange =
+    typeof options.onRuntimeStateChange === "function" ? options.onRuntimeStateChange : null;
   const normalizedProviders = (config.chatProviders || []).map((provider) => {
     if (provider.isVirtual || (provider.keys && provider.keys.length > 0)) {
       return provider;
@@ -534,6 +559,53 @@ export function createChatService(config) {
 
   function cloneValue(value) {
     return JSON.parse(JSON.stringify(value));
+  }
+
+  function normalizePersistedKeyState(input) {
+    const base = createEmptyKeyState();
+    const raw = input && typeof input === "object" ? input : {};
+    const cooldownUntil = normalizeTimestampMs(raw.cooldownUntil, 0);
+    return {
+      successCount: normalizeCount(raw.successCount, base.successCount),
+      failureCount: normalizeCount(raw.failureCount, base.failureCount),
+      quotaFailureCount: normalizeCount(raw.quotaFailureCount, base.quotaFailureCount),
+      retryableFailureCount: normalizeCount(raw.retryableFailureCount, base.retryableFailureCount),
+      consecutiveFailures: normalizeCount(raw.consecutiveFailures, base.consecutiveFailures),
+      cooldownUntil: cooldownUntil > Date.now() ? cooldownUntil : 0,
+      lastUsedAt: normalizeText(raw.lastUsedAt, ""),
+      lastError: normalizeText(raw.lastError, ""),
+      lastLatencyMs: normalizeDurationMs(raw.lastLatencyMs, base.lastLatencyMs),
+      inFlight: 0,
+    };
+  }
+
+  function normalizePersistedDispatchEvent(input) {
+    const raw = input && typeof input === "object" ? input : null;
+    if (!raw) {
+      return null;
+    }
+
+    return {
+      id: normalizeText(raw.id, randomId("dsp_")),
+      createdAt: normalizeText(raw.createdAt, nowIso()),
+      routeType: normalizeText(raw.routeType, ""),
+      requestKind: normalizeText(raw.requestKind, ""),
+      userId: normalizeText(raw.userId, ""),
+      username: normalizeText(raw.username, ""),
+      conversationId: normalizeText(raw.conversationId, ""),
+      providerId: normalizeText(raw.providerId, ""),
+      providerLabel: normalizeText(raw.providerLabel, ""),
+      apiKeyId: normalizeText(raw.apiKeyId, ""),
+      apiKeyName: normalizeText(raw.apiKeyName, ""),
+      model: normalizeText(raw.model, ""),
+      attemptIndex: normalizeCount(raw.attemptIndex, 0),
+      keyPriority: normalizePriority(raw.keyPriority, 0),
+      keyWeight: normalizeWeight(raw.keyWeight, 1),
+      status: normalizeText(raw.status, "unknown"),
+      durationMs: normalizeDurationMs(raw.durationMs, 0),
+      error: normalizeText(raw.error, ""),
+      cooldownMs: normalizeDurationMs(raw.cooldownMs, 0),
+    };
   }
 
   function defaultDispatchSettings() {
@@ -605,14 +677,106 @@ export function createChatService(config) {
     }
   }
 
-  function applyRoutingConfig(input = {}) {
+  function normalizeRuntimeState(input = {}) {
+    const raw = input && typeof input === "object" ? input : {};
+    const nextApiKeyStates = {};
+    for (const apiKey of providerKeys) {
+      nextApiKeyStates[apiKey.id] = normalizePersistedKeyState(raw.apiKeyStates?.[apiKey.id]);
+    }
+
+    const nextRouteCooldowns = {};
+    for (const route of baseAutoRoutes) {
+      const until = normalizeTimestampMs(raw.routeCooldowns?.[route.id], 0);
+      if (until > Date.now()) {
+        nextRouteCooldowns[route.id] = until;
+      }
+    }
+
+    const nextDispatchEvents = (Array.isArray(raw.dispatchEvents) ? raw.dispatchEvents : [])
+      .map(normalizePersistedDispatchEvent)
+      .filter(Boolean)
+      .slice(0, defaultDispatchSettings().dispatchHistoryLimit);
+
+    return {
+      apiKeyStates: nextApiKeyStates,
+      routeCooldowns: nextRouteCooldowns,
+      dispatchEvents: nextDispatchEvents,
+    };
+  }
+
+  function snapshotRuntimeState() {
+    const nextApiKeyStates = {};
+    for (const apiKey of providerKeys) {
+      const state = getKeyState(apiKey);
+      nextApiKeyStates[apiKey.id] = {
+        successCount: normalizeCount(state.successCount, 0),
+        failureCount: normalizeCount(state.failureCount, 0),
+        quotaFailureCount: normalizeCount(state.quotaFailureCount, 0),
+        retryableFailureCount: normalizeCount(state.retryableFailureCount, 0),
+        consecutiveFailures: normalizeCount(state.consecutiveFailures, 0),
+        cooldownUntil: normalizeTimestampMs(state.cooldownUntil, 0),
+        lastUsedAt: normalizeText(state.lastUsedAt, ""),
+        lastError: normalizeText(state.lastError, ""),
+        lastLatencyMs: normalizeDurationMs(state.lastLatencyMs, 0),
+        inFlight: 0,
+      };
+    }
+
+    const nextRouteCooldowns = {};
+    for (const route of baseAutoRoutes) {
+      const until = normalizeTimestampMs(routeCooldowns.get(route.id), 0);
+      if (until > Date.now()) {
+        nextRouteCooldowns[route.id] = until;
+      }
+    }
+
+    return {
+      apiKeyStates: nextApiKeyStates,
+      routeCooldowns: nextRouteCooldowns,
+      dispatchEvents: cloneValue(dispatchEvents),
+    };
+  }
+
+  function persistRuntimeState() {
+    if (!onRuntimeStateChange) {
+      return;
+    }
+    try {
+      onRuntimeStateChange(snapshotRuntimeState());
+    } catch (error) {
+      console.warn(`Warning: failed to persist chat runtime state: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  function applyRuntimeState(input = {}) {
+    const runtimeState = normalizeRuntimeState(input);
+    routeCooldowns.clear();
+    for (const [key, value] of Object.entries(runtimeState.routeCooldowns)) {
+      routeCooldowns.set(key, value);
+    }
+
+    dispatchEvents.length = 0;
+    dispatchEvents.push(...runtimeState.dispatchEvents);
+
+    for (const apiKey of providerKeys) {
+      apiKeyStates.set(apiKey.id, runtimeState.apiKeyStates[apiKey.id] || createEmptyKeyState());
+    }
+
+    trimDispatchHistory();
+  }
+
+  function applyRoutingConfig(input = {}, settings = {}) {
     routingConfig = normalizeRoutingConfig(input);
     routeOverridesById = new Map(routingConfig.routeOverrides.map((entry) => [entry.id, entry]));
     trimDispatchHistory();
+    if (settings.persist !== false) {
+      persistRuntimeState();
+    }
     return cloneValue(routingConfig);
   }
 
-  applyRoutingConfig();
+  applyRoutingConfig({}, { persist: false });
+  applyRuntimeState(options.runtimeState || {});
 
   function dispatchSettings() {
     return routingConfig.dispatch;
@@ -725,6 +889,7 @@ export function createChatService(config) {
       ...event,
     });
     trimDispatchHistory();
+    persistRuntimeState();
   }
 
   function keyScore(apiKey, state, keyConfig) {

@@ -116,7 +116,9 @@ const els = {
   adminUserSessions: document.getElementById("admin-user-sessions"),
   adminAuthSection: document.getElementById("admin-auth-section"),
   adminProviderUsageTable: document.getElementById("admin-provider-usage-table"),
+  adminApiKeysSection: document.getElementById("admin-api-keys-section"),
   adminApiKeyTable: document.getElementById("admin-api-key-table"),
+  adminAutoRoutingSection: document.getElementById("admin-auto-routing-section"),
   adminAutoRoutingTable: document.getElementById("admin-auto-routing-table"),
   adminDispatchTable: document.getElementById("admin-dispatch-table"),
   adminAuthTable: document.getElementById("admin-auth-table"),
@@ -1107,6 +1109,8 @@ function renderAdminOverview() {
   els.adminUserJobsSection.classList.toggle("hidden", !isAdmin);
   els.adminUserSessionsSection.classList.toggle("hidden", !isAdmin);
   els.adminAuthSection.classList.toggle("hidden", !isAdmin);
+  els.adminApiKeysSection.classList.toggle("hidden", !isAdmin);
+  els.adminAutoRoutingSection.classList.toggle("hidden", !isAdmin);
 
   if (!overview) {
     els.adminSummary.innerHTML = "";

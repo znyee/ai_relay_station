@@ -97,7 +97,12 @@ test("server requires APP_SESSION_SECRET", async () => {
 });
 
 test("registration accepts simple passwords and exposes the control overview to regular users", async (t) => {
-  const server = await startServer();
+  const server = await startServer({
+    SILICONFLOW_API_KEYS: "primary|sf-key-1|priority=100|weight=1",
+    SILICONFLOW_CHAT_MODELS: "deepseek-ai/DeepSeek-R1",
+    AUTO_CHAT_TEXT_ROUTE: "siliconflow:deepseek-ai/DeepSeek-R1|priority=100|weight=1",
+    AUTO_CHAT_VISION_ROUTE: "siliconflow:deepseek-ai/DeepSeek-R1|priority=100|weight=1",
+  });
   t.after(async () => {
     await stopServer(server.child);
   });
@@ -140,6 +145,9 @@ test("registration accepts simple passwords and exposes the control overview to 
   assert.ok("apiUsage" in overviewPayload);
   assert.deepEqual(overviewPayload.users, []);
   assert.deepEqual(overviewPayload.authEvents, []);
+  assert.equal(overviewPayload.summary.configuredApiKeys, 1);
+  assert.deepEqual(overviewPayload.apiKeys, []);
+  assert.equal(overviewPayload.autoRouting, null);
 
   const updateRoutingResponse = await fetch(`${server.baseUrl}/api/admin/routing-config`, {
     method: "PUT",

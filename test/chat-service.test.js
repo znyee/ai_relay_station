@@ -533,6 +533,137 @@ test("single provider can fail over across weighted API keys and expose admin te
   assert.equal(service.listDispatchEvents(10)[0].status, "success");
 });
 
+test("chat runtime state can be restored across service instances", async (t) => {
+  const originalFetch = global.fetch;
+
+  global.fetch = async (url) => {
+    if (String(url).includes("siliconflow.invalid")) {
+      return new Response(
+        JSON.stringify({
+          error: { message: "quota exceeded" },
+        }),
+        {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        id: "resp_restored",
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: "Recovered",
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  };
+
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const config = {
+    chatProviders: [
+      {
+        id: "auto",
+        label: "Auto",
+        endpoint: "",
+        apiKey: "",
+        models: ["auto"],
+        defaultModel: "auto",
+        headers: {},
+        body: {},
+        isVirtual: true,
+        autoRoutes: {
+          text: [
+            { providerId: "siliconflow", model: "deepseek-ai/DeepSeek-R1" },
+            { providerId: "alibaba_bailian", model: "qwen-plus-2025-12-01" },
+          ],
+        },
+      },
+      {
+        id: "siliconflow",
+        label: "SiliconFlow",
+        endpoint: "https://siliconflow.invalid/chat",
+        apiKey: "sf-key",
+        models: ["deepseek-ai/DeepSeek-R1"],
+        defaultModel: "deepseek-ai/DeepSeek-R1",
+        headers: {},
+        body: {},
+      },
+      {
+        id: "alibaba_bailian",
+        label: "Alibaba Bailian",
+        endpoint: "https://bailian.invalid/chat",
+        apiKey: "ali-key",
+        models: ["qwen-plus-2025-12-01"],
+        defaultModel: "qwen-plus-2025-12-01",
+        headers: {},
+        body: {},
+      },
+    ],
+    defaultChatProviderId: "auto",
+    chatAttachmentTextBytes: 4096,
+    chatInlineImageBytes: 4096,
+    autoChatRetryCooldownMs: 60_000,
+    autoChatQuotaCooldownMs: 300_000,
+    adminDispatchHistoryLimit: 50,
+  };
+
+  let persistedRuntimeState = null;
+  const service = createChatService(config, {
+    onRuntimeStateChange(runtimeState) {
+      persistedRuntimeState = runtimeState;
+    },
+  });
+
+  const reply = await service.respond({
+    user: {
+      id: "usr_restore",
+      display_name: "user1",
+      username: "user1",
+      repo_url: "",
+      repo_local_path: "",
+    },
+    history: [
+      {
+        role: "user",
+        content: "hello",
+        attachments: [],
+      },
+    ],
+    providerId: "auto",
+    model: "auto",
+    conversationId: "con_restore",
+  });
+
+  assert.equal(reply.providerId, "alibaba_bailian");
+  assert.ok(persistedRuntimeState);
+
+  const restoredService = createChatService(config, {
+    runtimeState: persistedRuntimeState,
+  });
+
+  const restoredKey = restoredService.listApiKeys().find((entry) => entry.providerId === "siliconflow");
+  assert.equal(restoredKey.failureCount, 1);
+  assert.notEqual(restoredKey.cooldownUntil, "");
+  assert.equal(restoredService.listDispatchEvents(10).some((event) => event.status === "route-failed"), true);
+  assert.notEqual(
+    restoredService.describeAutoRouting().routes.text.find((route) => route.providerId === "siliconflow").cooldownUntil,
+    "",
+  );
+});
+
 test("runtime routing config can reprioritize auto routes", async (t) => {
   const originalFetch = global.fetch;
   const calls = [];
