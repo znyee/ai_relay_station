@@ -110,7 +110,7 @@
                 Start a chat.
               </div>
               <form id="chat-form" class="composer">
-                <textarea id="chat-input" rows="4" placeholder="Ask a question or plan the next change..."></textarea>
+                <textarea id="chat-input" rows="4" placeholder="Ask anything or attach files for context..."></textarea>
                 <input id="chat-attachments-input" class="hidden" type="file" multiple />
                 <div id="chat-attachment-list" class="attachment-selection hidden"></div>
                 <div class="composer-actions">
@@ -169,13 +169,17 @@
                 <div id="admin-summary" class="metric-cards"></div>
 
                 <div id="admin-users-section" class="admin-section hidden">
-                  <h4>User Management</h4>
+                  <div class="admin-section-header">
+                    <h4>User Management</h4>
+                    <input id="admin-user-search-input" class="admin-search-input" type="search" placeholder="Search users" />
+                  </div>
                   <div class="table-wrap">
                     <table class="data-table">
                       <thead>
                         <tr>
                           <th>User</th>
                           <th>Role</th>
+                          <th>Activity</th>
                           <th>Last Login</th>
                           <th>Actions</th>
                         </tr>
@@ -371,6 +375,20 @@
                 <div id="admin-user-records-section" class="admin-section hidden">
                   <h4 id="admin-user-records-title">User Conversations</h4>
                   <div id="admin-user-conversations" class="admin-user-records empty-state">
+                    Select a user.
+                  </div>
+                </div>
+
+                <div id="admin-user-jobs-section" class="admin-section hidden">
+                  <h4 id="admin-user-jobs-title">User Jobs</h4>
+                  <div id="admin-user-jobs" class="admin-user-records empty-state">
+                    Select a user.
+                  </div>
+                </div>
+
+                <div id="admin-user-sessions-section" class="admin-section hidden">
+                  <h4 id="admin-user-sessions-title">User Sessions</h4>
+                  <div id="admin-user-sessions" class="admin-user-records empty-state">
                     Select a user.
                   </div>
                 </div>

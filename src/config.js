@@ -50,6 +50,8 @@ export function loadConfig() {
     autoChatCircuitBreakerThreshold: Number(process.env.AUTO_CHAT_CIRCUIT_BREAKER_THRESHOLD || 3),
     autoChatCircuitBreakerMs: Number(process.env.AUTO_CHAT_CIRCUIT_BREAKER_MS || 10 * 60 * 1000),
     adminDispatchHistoryLimit: Number(process.env.ADMIN_DISPATCH_HISTORY_LIMIT || 200),
+    attachmentDownloadDebounceMs: Number(process.env.ATTACHMENT_DOWNLOAD_DEBOUNCE_MS || 1500),
+    attachmentDownloadMaxInFlightPerFile: Number(process.env.ATTACHMENT_DOWNLOAD_MAX_IN_FLIGHT_PER_FILE || 1),
     authMinPasswordLength: Number(process.env.AUTH_MIN_PASSWORD_LENGTH || 6),
     authMaxFailedAttempts: Number(process.env.AUTH_MAX_FAILED_ATTEMPTS || 5),
     authLockoutMinutes: Number(process.env.AUTH_LOCKOUT_MINUTES || 15),

@@ -37,6 +37,18 @@ function parseAuditRows(rows) {
   }));
 }
 
+function parseSessionRows(rows) {
+  return rows.map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    userAgent: row.user_agent,
+    ipAddress: row.ip_address,
+    lastSeenAt: row.last_seen_at,
+  }));
+}
+
 function ensureColumn(db, tableName, columnName, definition) {
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
   if (!columns.some((column) => column.name === columnName)) {
@@ -216,12 +228,25 @@ export function createDatabase(databasePath) {
       VALUES (@id, @user_id, @expires_at, @created_at, @user_agent, @ip_address, @last_seen_at)
     `),
     getSession: db.prepare(`SELECT * FROM sessions WHERE id = ?`),
+    listSessionsByUser: db.prepare(`
+      SELECT *
+      FROM sessions
+      WHERE user_id = ?
+      ORDER BY
+        CASE WHEN last_seen_at = '' THEN created_at ELSE last_seen_at END DESC,
+        created_at DESC
+    `),
     touchSession: db.prepare(`
       UPDATE sessions
       SET last_seen_at = @last_seen_at, user_agent = @user_agent, ip_address = @ip_address
       WHERE id = @id
     `),
     deleteSession: db.prepare(`DELETE FROM sessions WHERE id = ?`),
+    deleteSessionsByUser: db.prepare(`
+      DELETE FROM sessions
+      WHERE user_id = @user_id
+        AND (@exclude_id = '' OR id <> @exclude_id)
+    `),
     deleteExpiredSessions: db.prepare(`DELETE FROM sessions WHERE expires_at <= ?`),
     insertAuthAuditEvent: db.prepare(`
       INSERT INTO auth_audit_events (
@@ -480,6 +505,10 @@ export function createDatabase(databasePath) {
       return statements.getSession.get(sessionId) || null;
     },
 
+    listSessions(userId) {
+      return parseSessionRows(statements.listSessionsByUser.all(userId));
+    },
+
     touchSession(sessionId, { userAgent = "", ipAddress = "" } = {}) {
       statements.touchSession.run({
         id: sessionId,
@@ -491,6 +520,13 @@ export function createDatabase(databasePath) {
 
     deleteSession(sessionId) {
       statements.deleteSession.run(sessionId);
+    },
+
+    deleteSessionsByUser(userId, excludeSessionId = "") {
+      return statements.deleteSessionsByUser.run({
+        user_id: userId,
+        exclude_id: String(excludeSessionId || ""),
+      }).changes;
     },
 
     deleteExpiredSessions() {

@@ -315,3 +315,197 @@ test("root can persist and reset routing configuration", async (t) => {
   assert.deepEqual(resetPayload.routingConfig.routeOverrides, []);
   assert.deepEqual(resetPayload.routingConfig.keyRules, []);
 });
+
+test("root can unlock users, inspect jobs and sessions, and revoke all sessions", async (t) => {
+  const server = await startServer();
+  t.after(async () => {
+    await stopServer(server.child);
+  });
+
+  const registerResponse = await fetch(`${server.baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      username: "charlie",
+      password: "123456",
+    }),
+  });
+  assert.equal(registerResponse.status, 201);
+  const registerPayload = await registerResponse.json();
+  const charlieId = registerPayload.user.id;
+  const charlieCookie1 = sessionCookie(registerResponse);
+
+  const secondLoginResponse = await fetch(`${server.baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      username: "charlie",
+      password: "123456",
+    }),
+  });
+  assert.equal(secondLoginResponse.status, 200);
+  const charlieCookie2 = sessionCookie(secondLoginResponse);
+
+  const db = createDatabase(path.join(server.dataDir, "app.db"));
+  const conversation = db.createConversation(charlieId, "Ops");
+  db.addMessage({
+    conversationId: conversation.id,
+    role: "user",
+    content: "Need help",
+    model: "chat-disabled",
+    attachments: [],
+  });
+  db.createJob(charlieId, "Check deploy health");
+  db.markLoginFailure(charlieId, {
+    failedLoginAttempts: 5,
+    lockedUntil: "2099-01-01T00:00:00.000Z",
+  });
+
+  const rootLogin = await fetch(`${server.baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      username: "root",
+      password: "123456",
+    }),
+  });
+  assert.equal(rootLogin.status, 200);
+  const rootCookie = sessionCookie(rootLogin);
+
+  const unlockResponse = await fetch(`${server.baseUrl}/api/admin/users/${charlieId}/unlock`, {
+    method: "POST",
+    headers: {
+      cookie: rootCookie,
+    },
+  });
+  assert.equal(unlockResponse.status, 200);
+  const unlockPayload = await unlockResponse.json();
+  assert.equal(unlockPayload.user.failedLoginAttempts, 0);
+  assert.equal(unlockPayload.user.lockedUntil, "");
+
+  const recordsResponse = await fetch(`${server.baseUrl}/api/admin/users/${charlieId}/conversations`, {
+    headers: {
+      cookie: rootCookie,
+    },
+  });
+  assert.equal(recordsResponse.status, 200);
+  const recordsPayload = await recordsResponse.json();
+  assert.equal(recordsPayload.user.username, "charlie");
+  assert.equal(recordsPayload.jobs.length, 1);
+  assert.equal(recordsPayload.sessions.length, 2);
+  assert.equal(recordsPayload.conversations.length, 1);
+  assert.equal(recordsPayload.conversations[0].messages.length, 1);
+
+  const revokeResponse = await fetch(`${server.baseUrl}/api/admin/users/${charlieId}/revoke-sessions`, {
+    method: "POST",
+    headers: {
+      cookie: rootCookie,
+    },
+  });
+  assert.equal(revokeResponse.status, 200);
+  const revokePayload = await revokeResponse.json();
+  assert.equal(revokePayload.ok, true);
+  assert.equal(revokePayload.deletedSessions, 2);
+
+  const charlieMe1 = await fetch(`${server.baseUrl}/api/me`, {
+    headers: {
+      cookie: charlieCookie1,
+    },
+  });
+  assert.equal(charlieMe1.status, 401);
+
+  const charlieMe2 = await fetch(`${server.baseUrl}/api/me`, {
+    headers: {
+      cookie: charlieCookie2,
+    },
+  });
+  assert.equal(charlieMe2.status, 401);
+
+  const recordsAfterResponse = await fetch(`${server.baseUrl}/api/admin/users/${charlieId}/conversations`, {
+    headers: {
+      cookie: rootCookie,
+    },
+  });
+  assert.equal(recordsAfterResponse.status, 200);
+  const recordsAfterPayload = await recordsAfterResponse.json();
+  assert.equal(recordsAfterPayload.sessions.length, 0);
+});
+
+test("duplicate attachment downloads are throttled per user and file", async (t) => {
+  const server = await startServer({
+    ATTACHMENT_DOWNLOAD_DEBOUNCE_MS: "10000",
+    ATTACHMENT_DOWNLOAD_MAX_IN_FLIGHT_PER_FILE: "1",
+  });
+  t.after(async () => {
+    await stopServer(server.child);
+  });
+
+  const registerResponse = await fetch(`${server.baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      username: "dana",
+      password: "123456",
+    }),
+  });
+  assert.equal(registerResponse.status, 201);
+  const registerPayload = await registerResponse.json();
+  const danaId = registerPayload.user.id;
+  const danaCookie = sessionCookie(registerResponse);
+
+  const db = createDatabase(path.join(server.dataDir, "app.db"));
+  const conversation = db.createConversation(danaId, "Files");
+  const messageId = "msg_download_1";
+  const attachmentId = "att_download_1";
+  const fileDir = path.join(server.dataDir, "uploads", "chat", danaId, conversation.id, messageId);
+  const filePath = path.join(fileDir, "01-report.txt");
+  await fs.mkdir(fileDir, { recursive: true });
+  await fs.writeFile(filePath, "download me", "utf8");
+  db.addMessage({
+    id: messageId,
+    conversationId: conversation.id,
+    role: "assistant",
+    content: "Attached report",
+    model: "chat-disabled",
+    attachments: [
+      {
+        id: attachmentId,
+        name: "report.txt",
+        storedName: "01-report.txt",
+        diskPath: filePath,
+        mimeType: "text/plain",
+        size: 11,
+        kind: "text",
+      },
+    ],
+  });
+
+  const url = `${server.baseUrl}/api/chat/conversations/${conversation.id}/messages/${messageId}/attachments/${attachmentId}`;
+  const [firstResponse, secondResponse] = await Promise.all([
+    fetch(url, {
+      headers: {
+        cookie: danaCookie,
+      },
+    }),
+    fetch(url, {
+      headers: {
+        cookie: danaCookie,
+      },
+    }),
+  ]);
+
+  const responses = [firstResponse, secondResponse].sort((a, b) => a.status - b.status);
+  assert.equal(responses[0].status, 200);
+  assert.equal(responses[1].status, 429);
+  assert.equal(await responses[0].text(), "download me");
+  const errorPayload = await responses[1].json();
+  assert.match(errorPayload.error, /already downloading/i);
+});

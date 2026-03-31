@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createChatService } from "../src/chat-service.js";
 
-test("chat system prompt keeps each conversation independent from repository state", async (t) => {
+test("chat system prompt keeps chat mode general-purpose and independent per conversation", async (t) => {
   const originalFetch = global.fetch;
   let capturedMessages = [];
 
@@ -71,8 +71,10 @@ test("chat system prompt keeps each conversation independent from repository sta
   });
 
   assert.equal(capturedMessages[0].role, "system");
+  assert.match(capturedMessages[0].content, /general-purpose AI chat session/i);
   assert.match(capturedMessages[0].content, /independent chat session/i);
-  assert.doesNotMatch(capturedMessages[0].content, /repository/i);
+  assert.match(capturedMessages[0].content, /not tied to any repository, workspace, or project/i);
+  assert.match(capturedMessages[0].content, /prefer clear plain prose by default/i);
 });
 
 test("auto provider falls back to Bailian after SiliconFlow rate limit", async (t) => {

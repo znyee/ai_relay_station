@@ -39,6 +39,7 @@ if (savedRoutingConfig) {
 }
 const jobQueue = createJobQueue({ config, db });
 db.failRunningJobs("Relay Station restarted before the job finished.");
+const attachmentDownloadState = new Map();
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -207,12 +208,93 @@ function findAttachment(attachments, attachmentId) {
   return attachments.find((attachment) => attachment.id === attachmentId) || null;
 }
 
-async function sendAttachmentFile(res, attachment) {
-  const body = await fs.readFile(attachment.diskPath);
-  res.setHeader("Content-Type", attachment.mimeType || "application/octet-stream");
-  res.setHeader("Content-Length", body.length);
-  res.setHeader("Content-Disposition", `inline; filename="${attachment.name.replaceAll('"', "")}"`);
-  res.send(body);
+function attachmentDownloadKey(userId, attachment) {
+  return `${String(userId || "")}:${attachment.diskPath}`;
+}
+
+function canStartAttachmentDownload(userId, attachment) {
+  const key = attachmentDownloadKey(userId, attachment);
+  const now = Date.now();
+  const current = attachmentDownloadState.get(key) || {
+    inFlight: 0,
+    lastStartedAt: 0,
+  };
+
+  const maxInFlight = Math.max(1, Number(config.attachmentDownloadMaxInFlightPerFile || 1));
+  const debounceMs = Math.max(0, Number(config.attachmentDownloadDebounceMs || 0));
+  const isDebounced = current.lastStartedAt > 0 && now - current.lastStartedAt < debounceMs;
+  if (current.inFlight >= maxInFlight || isDebounced) {
+    return false;
+  }
+
+  attachmentDownloadState.set(key, {
+    inFlight: current.inFlight + 1,
+    lastStartedAt: now,
+  });
+  return true;
+}
+
+function finishAttachmentDownload(userId, attachment) {
+  const key = attachmentDownloadKey(userId, attachment);
+  const current = attachmentDownloadState.get(key);
+  if (!current) {
+    return;
+  }
+
+  const nextInFlight = Math.max(0, Number(current.inFlight || 0) - 1);
+  if (nextInFlight === 0) {
+    attachmentDownloadState.set(key, {
+      inFlight: 0,
+      lastStartedAt: current.lastStartedAt,
+    });
+    const debounceMs = Math.max(0, Number(config.attachmentDownloadDebounceMs || 0));
+    if (debounceMs === 0) {
+      attachmentDownloadState.delete(key);
+      return;
+    }
+    setTimeout(() => {
+      const latest = attachmentDownloadState.get(key);
+      if (latest && latest.inFlight === 0 && latest.lastStartedAt === current.lastStartedAt) {
+        attachmentDownloadState.delete(key);
+      }
+    }, debounceMs);
+    return;
+  }
+
+  attachmentDownloadState.set(key, {
+    inFlight: nextInFlight,
+    lastStartedAt: current.lastStartedAt,
+  });
+}
+
+async function sendAttachmentFile(req, res, attachment) {
+  if (!canStartAttachmentDownload(req.user?.id || "", attachment)) {
+    return jsonError(res, 429, "This file is already downloading. Please wait a moment.");
+  }
+
+  let released = false;
+  const release = () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    finishAttachmentDownload(req.user?.id || "", attachment);
+  };
+
+  res.on("finish", release);
+  res.on("close", release);
+  res.on("error", release);
+
+  try {
+    const body = await fs.readFile(attachment.diskPath);
+    res.setHeader("Content-Type", attachment.mimeType || "application/octet-stream");
+    res.setHeader("Content-Length", body.length);
+    res.setHeader("Content-Disposition", `inline; filename="${attachment.name.replaceAll('"', "")}"`);
+    res.send(body);
+  } catch (error) {
+    release();
+    throw error;
+  }
 }
 
 function issueSession(res, user, { ipAddress = "", userAgent = "" } = {}) {
@@ -323,6 +405,30 @@ function serializeAdminUser(user) {
     ...serializeUser(user),
     repoUrl: user.repo_url,
     repoLocalPath: user.repo_local_path,
+  };
+}
+
+function serializeAdminSession(session, currentSessionId = "") {
+  return {
+    id: session.id,
+    ipAddress: session.ipAddress || "",
+    userAgent: session.userAgent || "",
+    createdAt: session.createdAt || "",
+    lastSeenAt: session.lastSeenAt || "",
+    expiresAt: session.expiresAt || "",
+    isCurrent: Boolean(currentSessionId) && session.id === currentSessionId,
+  };
+}
+
+function serializeAdminUserWithStats(user) {
+  const conversations = db.listConversations(user.id);
+  const jobs = db.listJobs(user.id);
+  const sessions = db.listSessions(user.id);
+  return {
+    ...serializeAdminUser(user),
+    conversationCount: conversations.length,
+    jobCount: jobs.length,
+    sessionCount: sessions.length,
   };
 }
 
@@ -607,7 +713,7 @@ app.get("/api/admin/overview", requireAuth, async (req, res) => {
       configuredApiKeys: apiKeys.length,
     },
     apiUsage: summarizeApiUsage(apiKeys, dispatchEvents),
-    users: isAdmin ? db.listUsers().map(serializeAdminUser) : [],
+    users: isAdmin ? db.listUsers().map(serializeAdminUserWithStats) : [],
     authEvents: isAdmin ? db.listAuthAuditEvents(100) : [],
     apiKeys,
     dispatchEvents: dispatchEvents.map((event) => serializeDispatchEventForViewer(event, req.user)),
@@ -685,6 +791,47 @@ app.patch("/api/admin/users/:userId", requireAdmin, async (req, res) => {
   });
 });
 
+app.post("/api/admin/users/:userId/unlock", requireAdmin, async (req, res) => {
+  const target = db.getUserById(req.params.userId);
+  if (!target) {
+    return jsonError(res, 404, "User not found.");
+  }
+
+  const updated = db.markLoginFailure(target.id, {
+    failedLoginAttempts: 0,
+    lockedUntil: null,
+  });
+
+  res.json({
+    user: serializeAdminUserWithStats(updated),
+  });
+});
+
+app.post("/api/admin/users/:userId/revoke-sessions", requireAdmin, async (req, res) => {
+  const target = db.getUserById(req.params.userId);
+  if (!target) {
+    return jsonError(res, 404, "User not found.");
+  }
+  if (target.id === req.user.id) {
+    return jsonError(res, 400, "Use Log out for your current session.");
+  }
+
+  const deletedSessions = db.deleteSessionsByUser(target.id);
+  db.recordAuthEvent({
+    userId: target.id,
+    username: target.username,
+    eventType: "admin_logout",
+    reason: `administrator:${req.user.username}`,
+    ipAddress: clientIp(req),
+    userAgent: String(req.headers["user-agent"] || ""),
+  });
+
+  res.json({
+    ok: true,
+    deletedSessions,
+  });
+});
+
 app.delete("/api/admin/users/:userId", requireAdmin, async (req, res) => {
   const target = db.getUserById(req.params.userId);
   if (!target) {
@@ -714,13 +861,19 @@ app.get("/api/admin/users/:userId/conversations", requireAdmin, async (req, res)
     return jsonError(res, 404, "User not found.");
   }
 
+  const sessions = db
+    .listSessions(target.id)
+    .map((session) => serializeAdminSession(session, req.authSession?.id || ""));
+  const jobs = db.listJobs(target.id).map(jobPayload);
   const conversations = db.listConversations(target.id).map((conversation) => ({
     ...conversationPayload(conversation),
     messages: db.listMessages(conversation.id).map(adminMessagePayload),
   }));
 
   res.json({
-    user: serializeAdminUser(target),
+    user: serializeAdminUserWithStats(target),
+    sessions,
+    jobs,
     conversations,
   });
 });
@@ -966,7 +1119,7 @@ app.get(
       return jsonError(res, 404, "Attachment not found.");
     }
 
-    return sendAttachmentFile(res, attachment);
+    return sendAttachmentFile(req, res, attachment);
   },
 );
 
@@ -1056,7 +1209,7 @@ app.get("/api/code/jobs/:jobId/attachments/:attachmentId", requireCodeAccess, as
     return jsonError(res, 404, "Attachment not found.");
   }
 
-  return sendAttachmentFile(res, attachment);
+  return sendAttachmentFile(req, res, attachment);
 });
 
 app.get("/api/code/jobs/:jobId/outputs/:attachmentId", requireCodeAccess, async (req, res) => {
@@ -1070,7 +1223,7 @@ app.get("/api/code/jobs/:jobId/outputs/:attachmentId", requireCodeAccess, async 
     return jsonError(res, 404, "Output file not found.");
   }
 
-  return sendAttachmentFile(res, attachment);
+  return sendAttachmentFile(req, res, attachment);
 });
 
 app.get("/api/code/jobs/:jobId/log", requireCodeAccess, async (req, res) => {

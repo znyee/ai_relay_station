@@ -15,6 +15,9 @@ const state = {
   adminSelectedUserId: null,
   adminSelectedUser: null,
   adminSelectedUserConversations: [],
+  adminSelectedUserJobs: [],
+  adminSelectedUserSessions: [],
+  adminUserSearch: "",
   pendingChatAttachments: [],
   pendingCodeAttachments: [],
   chatRequestPending: false,
@@ -23,6 +26,7 @@ const state = {
 const CHAT_PROVIDER_STORAGE_KEY = "relay.chatProviderId.v2";
 const CHAT_MODEL_STORAGE_KEY_PREFIX = "relay.chatModel.v2.";
 const JOB_POLL_INTERVAL_MS = 2000;
+const ATTACHMENT_DOWNLOAD_DEBOUNCE_MS = 1500;
 
 const els = {
   appShell: document.getElementById("app-shell"),
@@ -77,6 +81,7 @@ const els = {
   adminRefreshButton: document.getElementById("admin-refresh-button"),
   adminSummary: document.getElementById("admin-summary"),
   adminUsersSection: document.getElementById("admin-users-section"),
+  adminUserSearchInput: document.getElementById("admin-user-search-input"),
   adminUsersTable: document.getElementById("admin-users-table"),
   adminDispatchSettingsSection: document.getElementById("admin-dispatch-settings-section"),
   adminDispatchForm: document.getElementById("admin-dispatch-form"),
@@ -90,6 +95,12 @@ const els = {
   adminUserRecordsSection: document.getElementById("admin-user-records-section"),
   adminUserRecordsTitle: document.getElementById("admin-user-records-title"),
   adminUserConversations: document.getElementById("admin-user-conversations"),
+  adminUserJobsSection: document.getElementById("admin-user-jobs-section"),
+  adminUserJobsTitle: document.getElementById("admin-user-jobs-title"),
+  adminUserJobs: document.getElementById("admin-user-jobs"),
+  adminUserSessionsSection: document.getElementById("admin-user-sessions-section"),
+  adminUserSessionsTitle: document.getElementById("admin-user-sessions-title"),
+  adminUserSessions: document.getElementById("admin-user-sessions"),
   adminAuthSection: document.getElementById("admin-auth-section"),
   adminProviderUsageTable: document.getElementById("admin-provider-usage-table"),
   adminApiKeyTable: document.getElementById("admin-api-key-table"),
@@ -110,6 +121,7 @@ const els = {
 
 let jobsRefreshInFlight = false;
 let messageRenderFrame = 0;
+const attachmentDownloads = new Map();
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -342,6 +354,50 @@ function renderMarkdown(text) {
   return restoreHtmlPlaceholders(blocks.join(""), placeholders);
 }
 
+function shouldAllowAttachmentDownload(url) {
+  const key = String(url || "").trim();
+  if (!key) {
+    return true;
+  }
+
+  const now = Date.now();
+  const cooldownUntil = attachmentDownloads.get(key) || 0;
+  if (cooldownUntil > now) {
+    return false;
+  }
+
+  const nextCooldown = now + ATTACHMENT_DOWNLOAD_DEBOUNCE_MS;
+  attachmentDownloads.set(key, nextCooldown);
+  window.setTimeout(() => {
+    const latest = attachmentDownloads.get(key) || 0;
+    if (latest <= Date.now()) {
+      attachmentDownloads.delete(key);
+    }
+  }, ATTACHMENT_DOWNLOAD_DEBOUNCE_MS + 50);
+  return true;
+}
+
+function setAttachmentDownloadPending(card, pending) {
+  if (!card) {
+    return;
+  }
+
+  const hint = card.querySelector(".attachment-download-hint");
+  if (pending) {
+    card.classList.add("download-pending");
+    if (hint) {
+      hint.dataset.defaultText ||= hint.textContent || "Click to download";
+      hint.textContent = "Preparing download";
+    }
+    return;
+  }
+
+  card.classList.remove("download-pending");
+  if (hint?.dataset.defaultText) {
+    hint.textContent = hint.dataset.defaultText;
+  }
+}
+
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   const body = options.body;
@@ -451,6 +507,9 @@ function showLogin() {
   state.adminSelectedUserId = null;
   state.adminSelectedUser = null;
   state.adminSelectedUserConversations = [];
+  state.adminSelectedUserJobs = [];
+  state.adminSelectedUserSessions = [];
+  state.adminUserSearch = "";
   els.loginScreen.classList.remove("hidden");
   els.appScreen.classList.add("hidden");
   renderAuthMode();
@@ -1020,6 +1079,18 @@ function collectAutoRouteOverrides() {
   }));
 }
 
+function filteredAdminUsers() {
+  const users = state.adminOverview?.users || [];
+  const search = String(state.adminUserSearch || "").trim().toLowerCase();
+  if (!search) {
+    return users;
+  }
+  return users.filter((user) => {
+    const haystack = `${user.displayName || ""} ${user.username || ""}`.toLowerCase();
+    return haystack.includes(search);
+  });
+}
+
 function renderAdminUserRecords() {
   if (!state.me?.isAdmin) {
     return;
@@ -1029,52 +1100,123 @@ function renderAdminUserRecords() {
     els.adminUserRecordsTitle.textContent = "User Conversations";
     els.adminUserConversations.className = "admin-user-records empty-state";
     els.adminUserConversations.textContent = "Select a user.";
+    els.adminUserJobsTitle.textContent = "User Jobs";
+    els.adminUserJobs.className = "admin-user-records empty-state";
+    els.adminUserJobs.textContent = "Select a user.";
+    els.adminUserSessionsTitle.textContent = "User Sessions";
+    els.adminUserSessions.className = "admin-user-records empty-state";
+    els.adminUserSessions.textContent = "Select a user.";
     return;
   }
 
   els.adminUserRecordsTitle.textContent = `User Conversations · ${state.adminSelectedUser.displayName} (${state.adminSelectedUser.username})`;
+  els.adminUserJobsTitle.textContent = `User Jobs · ${state.adminSelectedUser.displayName}`;
+  els.adminUserSessionsTitle.textContent = `User Sessions · ${state.adminSelectedUser.displayName}`;
 
   if (!state.adminSelectedUserConversations.length) {
     els.adminUserConversations.className = "admin-user-records empty-state";
     els.adminUserConversations.textContent = "No chat history.";
-    return;
+  } else {
+    els.adminUserConversations.className = "admin-user-records";
+    els.adminUserConversations.innerHTML = state.adminSelectedUserConversations
+      .map(
+        (conversation) => `
+          <article class="admin-record-card">
+            <div class="admin-record-header">
+              <div>
+                <h5>${escapeHtml(conversation.title)}</h5>
+                <p>${escapeHtml(formatDateTime(conversation.updatedAt))}</p>
+              </div>
+              <span>${escapeHtml(String(conversation.messages?.length || 0))} msgs</span>
+            </div>
+            <div class="admin-record-stream">
+              ${
+                conversation.messages?.length
+                  ? conversation.messages
+                      .map((message) => {
+                        const attachmentText = message.attachments?.length
+                          ? `<div class="table-subline">Attachments: ${escapeHtml(message.attachments.map((attachment) => attachment.label || attachment.name).join(", "))}</div>`
+                          : "";
+                        return `
+                          <div class="admin-record-message ${escapeHtml(message.role)}">
+                            <div class="admin-record-meta">
+                              <strong>${escapeHtml(message.role)}</strong>
+                              <span>${escapeHtml(formatDateTime(message.createdAt))}</span>
+                              ${message.model ? `<span>${escapeHtml(message.model)}</span>` : ""}
+                            </div>
+                            <pre>${escapeHtml(message.content || "")}</pre>
+                            ${attachmentText}
+                          </div>
+                        `;
+                      })
+                      .join("")
+                  : '<div class="table-empty">No messages recorded.</div>'
+              }
+            </div>
+          </article>
+        `,
+      )
+      .join("");
   }
 
-  els.adminUserConversations.className = "admin-user-records";
-  els.adminUserConversations.innerHTML = state.adminSelectedUserConversations
-    .map(
-      (conversation) => `
+  if (!state.adminSelectedUserJobs.length) {
+    els.adminUserJobs.className = "admin-user-records empty-state";
+    els.adminUserJobs.textContent = "No jobs.";
+  } else {
+    els.adminUserJobs.className = "admin-user-records";
+    els.adminUserJobs.innerHTML = state.adminSelectedUserJobs
+      .map(
+        (job) => `
         <article class="admin-record-card">
           <div class="admin-record-header">
             <div>
-              <h5>${escapeHtml(conversation.title)}</h5>
-              <p>${escapeHtml(formatDateTime(conversation.updatedAt))}</p>
+              <h5>${escapeHtml(jobTitle(job))}</h5>
+              <p>${escapeHtml(formatDateTime(job.createdAt))}</p>
             </div>
-            <span>${escapeHtml(String(conversation.messages?.length || 0))} msgs</span>
+            <span class="status-pill ${escapeHtml(job.status)}">${escapeHtml(job.status)}</span>
           </div>
           <div class="admin-record-stream">
-            ${
-              conversation.messages?.length
-                ? conversation.messages
-                    .map((message) => {
-                      const attachmentText = message.attachments?.length
-                        ? `<div class="table-subline">Attachments: ${escapeHtml(message.attachments.map((attachment) => attachment.label || attachment.name).join(", "))}</div>`
-                        : "";
-                      return `
-                        <div class="admin-record-message ${escapeHtml(message.role)}">
-                          <div class="admin-record-meta">
-                            <strong>${escapeHtml(message.role)}</strong>
-                            <span>${escapeHtml(formatDateTime(message.createdAt))}</span>
-                            ${message.model ? `<span>${escapeHtml(message.model)}</span>` : ""}
-                          </div>
-                          <pre>${escapeHtml(message.content || "")}</pre>
-                          ${attachmentText}
-                        </div>
-                      `;
-                    })
-                    .join("")
-                : '<div class="table-empty">No messages recorded.</div>'
-            }
+            <div class="admin-record-message assistant">
+              <div class="admin-record-meta">
+                <span>${escapeHtml(job.branchName || "no branch")}</span>
+                <span>${escapeHtml(job.finishedAt ? formatDateTime(job.finishedAt) : "in progress")}</span>
+                ${job.diffStat ? `<span>${escapeHtml(job.diffStat)}</span>` : ""}
+              </div>
+              <pre>${escapeHtml(job.finalMessage || job.errorText || job.commandPreview || "No output.")}</pre>
+            </div>
+          </div>
+        </article>
+      `,
+      )
+      .join("");
+  }
+
+  if (!state.adminSelectedUserSessions.length) {
+    els.adminUserSessions.className = "admin-user-records empty-state";
+    els.adminUserSessions.textContent = "No active sessions.";
+    return;
+  }
+
+  els.adminUserSessions.className = "admin-user-records";
+  els.adminUserSessions.innerHTML = state.adminSelectedUserSessions
+    .map(
+      (session) => `
+        <article class="admin-record-card">
+          <div class="admin-record-header">
+            <div>
+              <h5>${escapeHtml(session.ipAddress || "Unknown IP")}</h5>
+              <p>${escapeHtml(formatDateTime(session.lastSeenAt || session.createdAt))}</p>
+            </div>
+            ${session.isCurrent ? '<span class="pin-pill">Current</span>' : ""}
+          </div>
+          <div class="admin-record-stream">
+            <div class="admin-record-message assistant">
+              <div class="admin-record-meta">
+                <span>${escapeHtml(formatDateTime(session.createdAt))}</span>
+                <span>${escapeHtml(formatDateTime(session.expiresAt))}</span>
+              </div>
+              <pre>${escapeHtml(session.userAgent || "Unknown agent")}</pre>
+            </div>
           </div>
         </article>
       `,
@@ -1093,6 +1235,8 @@ function renderAdminOverview() {
   els.adminDispatchSettingsSection.classList.toggle("hidden", !isAdmin);
   els.adminKeyRulesSection.classList.toggle("hidden", !isAdmin);
   els.adminUserRecordsSection.classList.toggle("hidden", !isAdmin);
+  els.adminUserJobsSection.classList.toggle("hidden", !isAdmin);
+  els.adminUserSessionsSection.classList.toggle("hidden", !isAdmin);
   els.adminAuthSection.classList.toggle("hidden", !isAdmin);
   els.adminAutoRoutingSaveButton.classList.toggle("hidden", !isAdmin);
 
@@ -1103,7 +1247,7 @@ function renderAdminOverview() {
     renderTableEmptyBody(els.adminAutoRoutingTable, 7, "No auto routing data loaded.");
     renderTableEmptyBody(els.adminDispatchTable, 8, "No dispatch events yet.");
     if (isAdmin) {
-      renderTableEmptyBody(els.adminUsersTable, 4, "No users loaded.");
+      renderTableEmptyBody(els.adminUsersTable, 5, "No users loaded.");
       renderTableEmptyBody(els.adminKeyRulesTable, 8, "No key rules configured.");
       renderTableEmptyBody(els.adminAuthTable, 5, "No authentication audit events yet.");
       renderAdminUserRecords();
@@ -1159,6 +1303,7 @@ function renderAdminOverview() {
     els.adminBreakerThresholdInput.value = String(routingConfig.dispatch?.circuitBreakerThreshold ?? 3);
     els.adminBreakerCooldownInput.value = String(routingConfig.dispatch?.circuitBreakerMs ?? 0);
     els.adminHistoryLimitInput.value = String(routingConfig.dispatch?.dispatchHistoryLimit ?? 200);
+    els.adminUserSearchInput.value = state.adminUserSearch;
   }
 
   if (!usage.providerBreakdown?.length) {
@@ -1319,23 +1464,43 @@ function renderAdminOverview() {
   }
 
   if (isAdmin) {
-    if (!overview.users?.length) {
-      renderTableEmptyBody(els.adminUsersTable, 4, "No users found.");
+    const users = filteredAdminUsers();
+    if (!users.length) {
+      renderTableEmptyBody(els.adminUsersTable, 5, state.adminUserSearch ? "No matching users." : "No users found.");
     } else {
-      els.adminUsersTable.innerHTML = overview.users
+      els.adminUsersTable.innerHTML = users
         .map((user) => {
           const protectedUser = user.username === "root" || user.id === state.me.id;
+          const locked = Boolean(user.lockedUntil);
           return `
-            <tr>
+            <tr class="${state.adminSelectedUserId === user.id ? "is-selected" : ""}">
               <td>
                 <strong>${escapeCell(user.displayName)}</strong>
                 <div class="table-subline">${escapeCell(user.username)}</div>
               </td>
-              <td>${escapeCell(user.isAdmin ? "admin" : "member")}</td>
+              <td>
+                <strong>${escapeCell(user.isAdmin ? "admin" : "member")}</strong>
+                ${locked ? '<div class="table-subline">locked</div>' : ""}
+              </td>
+              <td>${escapeCell(`${user.conversationCount || 0} chats · ${user.jobCount || 0} jobs · ${user.sessionCount || 0} sessions`)}</td>
               <td>${escapeCell(user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "Never")}</td>
               <td>
                 <div class="admin-user-actions">
-                  <button type="button" class="ghost-button compact-button" data-action="chats" data-user-id="${escapeHtml(user.id)}">Chats</button>
+                  <button type="button" class="ghost-button compact-button" data-action="view" data-user-id="${escapeHtml(user.id)}">Open</button>
+                  <button
+                    type="button"
+                    class="ghost-button compact-button"
+                    data-action="unlock"
+                    data-user-id="${escapeHtml(user.id)}"
+                    ${locked ? "" : "disabled"}
+                  >Unlock</button>
+                  <button
+                    type="button"
+                    class="ghost-button compact-button"
+                    data-action="signout"
+                    data-user-id="${escapeHtml(user.id)}"
+                    ${protectedUser ? "disabled" : ""}
+                  >Sign Out</button>
                   <button type="button" class="ghost-button compact-button" data-action="password" data-user-id="${escapeHtml(user.id)}" data-username="${escapeHtml(user.username)}">Password</button>
                   <button
                     type="button"
@@ -1690,6 +1855,26 @@ async function updateAdminUser(userId, payload) {
   }
 }
 
+async function unlockAdminUser(userId) {
+  await api(`/api/admin/users/${userId}/unlock`, {
+    method: "POST",
+  });
+  await refreshAdminOverview();
+  if (state.adminSelectedUserId === userId) {
+    await loadAdminUserConversations(userId);
+  }
+}
+
+async function revokeAdminUserSessions(userId) {
+  await api(`/api/admin/users/${userId}/revoke-sessions`, {
+    method: "POST",
+  });
+  await refreshAdminOverview();
+  if (state.adminSelectedUserId === userId) {
+    await loadAdminUserConversations(userId);
+  }
+}
+
 async function deleteAdminUser(userId) {
   await api(`/api/admin/users/${userId}`, {
     method: "DELETE",
@@ -1698,6 +1883,8 @@ async function deleteAdminUser(userId) {
     state.adminSelectedUserId = null;
     state.adminSelectedUser = null;
     state.adminSelectedUserConversations = [];
+    state.adminSelectedUserJobs = [];
+    state.adminSelectedUserSessions = [];
   }
   await refreshAdminOverview();
 }
@@ -1707,6 +1894,8 @@ async function loadAdminUserConversations(userId) {
   state.adminSelectedUserId = userId;
   state.adminSelectedUser = payload.user;
   state.adminSelectedUserConversations = payload.conversations || [];
+  state.adminSelectedUserJobs = payload.jobs || [];
+  state.adminSelectedUserSessions = payload.sessions || [];
   renderAdminUserRecords();
 }
 
@@ -1875,8 +2064,19 @@ els.adminUsersTable?.addEventListener("click", async (event) => {
   const isAdmin = button.dataset.isAdmin === "1";
 
   try {
-    if (action === "chats") {
+    if (action === "view") {
       await loadAdminUserConversations(userId);
+      return;
+    }
+    if (action === "unlock") {
+      await unlockAdminUser(userId);
+      return;
+    }
+    if (action === "signout") {
+      if (!window.confirm(`Sign out all active sessions for "${username}"?`)) {
+        return;
+      }
+      await revokeAdminUserSessions(userId);
       return;
     }
     if (action === "password") {
@@ -1904,6 +2104,11 @@ els.adminUsersTable?.addEventListener("click", async (event) => {
   } catch (error) {
     window.alert(error.message);
   }
+});
+
+els.adminUserSearchInput?.addEventListener("input", () => {
+  state.adminUserSearch = String(els.adminUserSearchInput.value || "");
+  renderAdminOverview();
 });
 
 els.newChatButton.addEventListener("click", async () => {
@@ -1996,6 +2201,28 @@ els.codeAttachmentList.addEventListener("click", (event) => {
     return;
   }
   removePendingAttachment(button.dataset.kind, Number(button.dataset.index));
+});
+
+document.addEventListener("click", (event) => {
+  const link = event.target.closest("a.attachment-card");
+  if (!link) {
+    return;
+  }
+
+  const href = String(link.getAttribute("href") || "").trim();
+  if (!href) {
+    return;
+  }
+
+  if (!shouldAllowAttachmentDownload(href)) {
+    event.preventDefault();
+    setAttachmentDownloadPending(link, true);
+    window.setTimeout(() => setAttachmentDownloadPending(link, false), ATTACHMENT_DOWNLOAD_DEBOUNCE_MS + 120);
+    return;
+  }
+
+  setAttachmentDownloadPending(link, true);
+  window.setTimeout(() => setAttachmentDownloadPending(link, false), ATTACHMENT_DOWNLOAD_DEBOUNCE_MS + 120);
 });
 
 els.chatForm.addEventListener("submit", async (event) => {
