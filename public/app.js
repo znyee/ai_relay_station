@@ -1596,31 +1596,22 @@ async function refreshJobs() {
   }
   jobsRefreshInFlight = true;
   try {
-  if (!state.me?.canUseCode) {
-    state.jobs = [];
-    state.selectedJobId = null;
-    state.selectedJob = null;
-    state.selectedJobLogText = "";
+    const payload = await api("/api/code/jobs");
+    state.jobs = payload.jobs;
+    els.queuePill.textContent = `${payload.queue.running}/${payload.queue.concurrency} running`;
+    if (!state.selectedJobId && state.jobs[0]) {
+      state.selectedJobId = state.jobs[0].id;
+    } else if (state.selectedJobId && !state.jobs.some((job) => job.id === state.selectedJobId)) {
+      state.selectedJobId = state.jobs[0]?.id || null;
+    }
     renderJobs();
-    renderJobDetail();
-    return;
-  }
-  const payload = await api("/api/code/jobs");
-  state.jobs = payload.jobs;
-  els.queuePill.textContent = `${payload.queue.running}/${payload.queue.concurrency} running`;
-  if (!state.selectedJobId && state.jobs[0]) {
-    state.selectedJobId = state.jobs[0].id;
-  } else if (state.selectedJobId && !state.jobs.some((job) => job.id === state.selectedJobId)) {
-    state.selectedJobId = state.jobs[0]?.id || null;
-  }
-  renderJobs();
-  if (state.selectedJobId) {
-    await selectJob(state.selectedJobId);
-  } else {
-    state.selectedJob = null;
-    state.selectedJobLogText = "";
-    renderJobDetail();
-  }
+    if (state.selectedJobId) {
+      await selectJob(state.selectedJobId);
+    } else {
+      state.selectedJob = null;
+      state.selectedJobLogText = "";
+      renderJobDetail();
+    }
   } finally {
     jobsRefreshInFlight = false;
   }
@@ -2151,7 +2142,7 @@ setInterval(() => {
   if (document.visibilityState === "hidden") {
     return;
   }
-  if (state.me?.canUseCode) {
+  if (state.me) {
     refreshJobs().catch(() => {});
   }
   if (state.me && state.mode === "admin") {

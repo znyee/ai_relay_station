@@ -248,10 +248,6 @@ function normalizeRepoDefaultBranch(value, fallback = "main") {
   return text || fallback;
 }
 
-function userCanUseCode() {
-  return true;
-}
-
 function clientIp(req) {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.trim()) {
@@ -483,7 +479,7 @@ function serializeUser(user) {
     id: user.id,
     username: user.username,
     displayName: user.display_name,
-    canUseCode: userCanUseCode(user),
+    canUseCode: true,
     isAdmin: Boolean(user.isAdmin),
     failedLoginAttempts: Number(user.failedLoginAttempts || 0),
     lockedUntil: user.locked_until || "",
@@ -819,7 +815,7 @@ app.get("/api/me", requireAuth, async (req, res) => {
       defaultProviderId: chatService.defaultProviderId(),
     },
     capabilities: {
-      code: userCanUseCode(req.user),
+      code: true,
       admin: Boolean(req.user.isAdmin),
     },
     queue: jobQueue.stats(),
@@ -1526,8 +1522,8 @@ async function maybeBootstrapDefaultUser() {
     username: bootstrapUsername,
     passwordHash: hashPassword(bootstrapPassword),
     displayName: process.env.BOOTSTRAP_DISPLAY_NAME || "Owner",
-    repoUrl: process.env.BOOTSTRAP_REPO_URL || config.initialRepoUrl,
-    repoLocalPath: process.env.BOOTSTRAP_REPO_PATH || config.initialRepoPath,
+    repoUrl: process.env.BOOTSTRAP_REPO_URL || "",
+    repoLocalPath: process.env.BOOTSTRAP_REPO_PATH || "",
     repoDefaultBranch: process.env.BOOTSTRAP_REPO_BRANCH || "main",
     chatModel: bootstrapProvider.chatModel,
     allowedModels: bootstrapProvider.allowedModels,

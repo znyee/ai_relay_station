@@ -63,8 +63,6 @@ export function loadConfig() {
     authLoginRateLimitMaxAttempts: Number(process.env.AUTH_LOGIN_RATE_LIMIT_MAX_ATTEMPTS || 20),
     authRegisterRateLimitWindowMs: Number(process.env.AUTH_REGISTER_RATE_LIMIT_WINDOW_MS || 30 * 60 * 1000),
     authRegisterRateLimitMaxAttempts: Number(process.env.AUTH_REGISTER_RATE_LIMIT_MAX_ATTEMPTS || 6),
-    initialRepoUrl: process.env.INITIAL_REPO_URL || "https://github.com/znyee/owner-mcq.git",
-    initialRepoPath: process.env.INITIAL_REPO_PATH || "/home/ubuntu/repos/owner-mcq",
     rootAdminUsername: process.env.ROOT_ADMIN_USERNAME || "root",
     rootAdminDisplayName: process.env.ROOT_ADMIN_DISPLAY_NAME || "Root Admin",
     rootAdminPassword: process.env.ROOT_ADMIN_PASSWORD || "",

@@ -91,6 +91,7 @@ test("database tracks admin flags, login failures, and auth audit events", async
   const updated = db.markLoginSuccess(user.id, { ipAddress: "127.0.0.1" });
 
   assert.equal(db.getUserByUsername("root").isAdmin, true);
+  assert.equal(db.getUserByUsername("root").canUseCode, true);
   assert.equal(db.getUserByUsername("root").locked_until, null);
   assert.equal(updated.last_login_ip, "127.0.0.1");
   assert.equal(db.listAuthAuditEvents(10)[0].eventType, "login_locked");

@@ -8,7 +8,7 @@ function parseRows(rows) {
     changedFiles: safeJsonParse(row.changed_files_json, []),
     attachments: safeJsonParse(row.attachments_json, []),
     outputAttachments: safeJsonParse(row.output_attachments_json, []),
-    canUseCode: Boolean(row.can_use_code),
+    canUseCode: true,
     isAdmin: Boolean(row.is_admin),
     isPinned: Boolean(row.pinned_at),
     failedLoginAttempts: Number(row.failed_login_attempts || 0),
@@ -188,6 +188,7 @@ export function createDatabase(databasePath) {
     CREATE INDEX IF NOT EXISTS idx_code_jobs_status_created_at
       ON code_jobs (status, created_at ASC);
   `);
+  db.exec(`UPDATE users SET can_use_code = 1 WHERE can_use_code <> 1`);
 
   const statements = {
     insertUser: db.prepare(`
@@ -448,7 +449,7 @@ export function createDatabase(databasePath) {
         repo_default_branch: input.repoDefaultBranch || "main",
         chat_model: input.chatModel,
         allowed_models_json: JSON.stringify(input.allowedModels || []),
-        can_use_code: input.canUseCode ? 1 : 0,
+        can_use_code: 1,
         is_admin: input.isAdmin ? 1 : 0,
         created_at: timestamp,
         updated_at: timestamp,
@@ -467,7 +468,7 @@ export function createDatabase(databasePath) {
         repo_default_branch: input.repoDefaultBranch || "main",
         chat_model: input.chatModel,
         allowed_models_json: JSON.stringify(input.allowedModels || []),
-        can_use_code: input.canUseCode ? 1 : 0,
+        can_use_code: 1,
         is_admin: input.isAdmin ? 1 : 0,
         updated_at: nowIso(),
       });

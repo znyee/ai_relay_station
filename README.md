@@ -4,7 +4,7 @@ Relay Station is a no-container local MVP for a multi-user AI relay:
 
 - `Chat mode`: web chat that calls a model API
 - `Code mode`: queued tasks that run `codex exec` inside an isolated working directory
-- `1 user = 1 GitHub repository`
+- `Per-user repo binding is optional`
 - `1 code job = 1 fresh workspace`
 - `Attachments`: chat and code requests can include files and images
 
@@ -13,7 +13,7 @@ Relay Station is a no-container local MVP for a multi-user AI relay:
 - `src/server.js`: Express server, auth, API routes
 - `src/db.js`: SQLite schema and persistence using Node's built-in `node:sqlite`
 - `src/chat-service.js`: multi-provider chat proxy for OpenAI-compatible APIs
-- `src/job-queue.js`: serial code-job queue
+- `src/job-queue.js`: concurrent code-job queue with atomic SQLite job claiming
 - `src/codex-runner.js`: clones repo and runs `codex exec`
 - `public/`: single-page frontend
 
@@ -35,16 +35,16 @@ cp .env.example .env
 - `ROOT_ADMIN_PASSWORD` for the built-in `root` administrator, or let the server generate one-time credentials into `data/root-admin-password.txt`
 - at least one chat provider key, for example `DEEPSEEK_API_KEY`
 
-3. Seed the first user:
+3. Optional: seed a user from the CLI instead of registering in the web UI:
 
 ```bash
 npm run seed:user -- \
   --username owner \
   --password 'ChangeMe123!' \
-  --display-name 'Owner' \
-  --repo-url 'https://github.com/znyee/owner-mcq.git' \
-  --repo-path '/home/ubuntu/repos/owner-mcq'
+  --display-name 'Owner'
 ```
+
+Add `--repo-url` and `--repo-path` only if you want the seeded user pre-bound to a repository.
 
 4. Start the app:
 
@@ -90,10 +90,11 @@ http://127.0.0.1:3210
 
 - Creates a new job row in SQLite
 - Is available to every authenticated user
-- Clones the bound repo into `data/workspaces/<user>/<job>/repo`
+- Uses `data/workspaces/<user>/<job>/workspace` as the working directory
+- If the user has a bound repo, clones it and mirrors final changes into `data/workspaces/<user>/<job>/record`
 - Copies uploaded job attachments into `.relay-attachments/` inside the workspace
 - Runs `codex exec --dangerously-bypass-approvals-and-sandbox --ephemeral`
-- If files changed, stages everything, creates a Git commit, and pushes to the repo's default branch
+- If the user has a bound repo and files changed, stages everything, creates a Git commit, and pushes to the repo's default branch
 - Stores:
   - final message
   - git status
@@ -106,9 +107,8 @@ This is intentionally a trusted-host MVP. The process-level isolation comes from
 ## Current limits
 
 - No GitHub App yet
-- No streaming chat UI yet
 - No OS-level sandbox beyond Codex workspace sandbox
-- Code queue is serial by default
+- Admin UI still relies on native browser confirm/prompt flows in a few places
 
 ## Advanced AI key configuration
 

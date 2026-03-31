@@ -23,14 +23,10 @@ const username = readFlag("username") || process.env.SEED_USERNAME || "owner";
 const password = readFlag("password") || process.env.SEED_PASSWORD || "";
 const displayName = readFlag("display-name") || process.env.SEED_DISPLAY_NAME || username;
 const unbound = hasFlag("unbound") || process.env.SEED_UNBOUND === "1";
-const repoUrl = unbound ? "" : readFlag("repo-url") || process.env.SEED_REPO_URL || config.initialRepoUrl;
-const repoPath = unbound ? "" : readFlag("repo-path") || process.env.SEED_REPO_PATH || config.initialRepoPath;
+const repoUrl = unbound ? "" : readFlag("repo-url") || process.env.SEED_REPO_URL || "";
+const repoPath = unbound ? "" : readFlag("repo-path") || process.env.SEED_REPO_PATH || "";
 const repoBranch = readFlag("repo-branch") || process.env.SEED_REPO_BRANCH || "main";
 const isAdmin = hasFlag("admin") || process.env.SEED_ADMIN === "1";
-const codeEnabled =
-  hasFlag("code-enabled") ||
-  process.env.SEED_CODE_ENABLED === "1" ||
-  (!hasFlag("code-disabled") && process.env.SEED_CODE_ENABLED !== "0" && false);
 
 function defaultChatSelection() {
   const provider = config.chatProviders[0];
@@ -64,7 +60,7 @@ if (existing) {
     repoDefaultBranch: repoBranch,
     chatModel: existing.chat_model,
     allowedModels: existing.allowedModels,
-    canUseCode: codeEnabled,
+    canUseCode: true,
     isAdmin,
   });
   console.log(`Updated user ${username}`);
@@ -79,7 +75,7 @@ if (existing) {
     repoDefaultBranch: repoBranch,
     chatModel: defaults.chatModel,
     allowedModels: defaults.allowedModels,
-    canUseCode: codeEnabled,
+    canUseCode: true,
     isAdmin,
   });
   console.log(`Created user ${username}`);
