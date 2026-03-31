@@ -259,7 +259,8 @@ const TRANSLATIONS = {
     "admin.apiUsage": "API Usage",
     "admin.apiKeys": "API Keys",
     "admin.autoRouting": "Auto Routing",
-    "admin.autoRoutingNote": "Top to bottom wins inside each route type.",
+    "admin.autoRoutingNote": "Drag to reorder inside each route type. Top to bottom wins.",
+    "admin.dragToReorder": "Drag to reorder",
     "admin.dispatchTimeline": "Dispatch Timeline",
     "admin.dispatchEvents": "Dispatch Events",
     "admin.codeRepository": "Code Repository",
@@ -354,6 +355,7 @@ const TRANSLATIONS = {
     "table.route": "Route",
     "table.state": "State",
     "table.order": "Order",
+    "table.drag": "Drag",
     "table.time": "Time",
     "table.providerKey": "Provider / Key",
     "table.model": "Model",
@@ -498,7 +500,8 @@ const TRANSLATIONS = {
     "admin.apiUsage": "API 使用情况",
     "admin.apiKeys": "API Keys",
     "admin.autoRouting": "自动路由",
-    "admin.autoRoutingNote": "同一类型路由按从上到下优先。",
+    "admin.autoRoutingNote": "同一类型内可拖动排序，越靠上优先级越高。",
+    "admin.dragToReorder": "拖动排序",
     "admin.dispatchTimeline": "调度时间线",
     "admin.dispatchEvents": "调度事件",
     "admin.codeRepository": "代码仓库",
@@ -593,6 +596,7 @@ const TRANSLATIONS = {
     "table.route": "路由",
     "table.state": "状态",
     "table.order": "顺序",
+    "table.drag": "拖动",
     "table.time": "时间",
     "table.providerKey": "提供商 / Key",
     "table.model": "模型",
@@ -627,6 +631,7 @@ let messageRenderFrame = 0;
 let messageRenderPatchLastOnly = false;
 let jobsPollTimer = 0;
 let adminPollTimer = 0;
+let autoRouteDragState = null;
 const attachmentDownloads = new Map();
 const modalState = {
   resolve: null,
@@ -839,7 +844,7 @@ function applyStaticTranslations() {
   setHeader("#admin-auto-routing-section thead th:nth-child(2)", "table.route");
   setHeader("#admin-auto-routing-section thead th:nth-child(3)", "table.state");
   setHeader("#admin-auto-routing-section thead th:nth-child(4)", "table.order");
-  setHeader("#admin-auto-routing-section thead th:nth-child(5)", "table.actions");
+  setHeader("#admin-auto-routing-section thead th:nth-child(5)", "table.drag");
   setHeader("#admin-auto-routing-section thead th:nth-child(6)", "table.cooldown");
   setHeader("#admin-dispatch-table thead th:nth-child(1)", "table.time");
   setHeader("#admin-dispatch-table thead th:nth-child(2)", "table.type");
@@ -1946,6 +1951,17 @@ function buildRouteOverridesFromGroups(groups) {
   );
 }
 
+function clearAutoRouteDropIndicators() {
+  for (const row of els.adminAutoRoutingTable?.querySelectorAll(".route-drop-before, .route-drop-after, .route-dragging") || []) {
+    row.classList.remove("route-drop-before", "route-drop-after", "route-dragging");
+  }
+}
+
+function routeDropPlacement(row, clientY) {
+  const bounds = row.getBoundingClientRect();
+  return clientY <= bounds.top + bounds.height / 2 ? "before" : "after";
+}
+
 async function saveRoutingConfig(routingConfig) {
   await api("/api/admin/routing-config", {
     method: "PUT",
@@ -2268,7 +2284,7 @@ function renderAdminOverview() {
       .flatMap((routeType) => {
         const routes = autoRouteGroups[routeType] || [];
         return routes.map((route, index) => `
-          <tr data-route-type="${escapeHtml(routeType)}" data-route-id="${escapeHtml(route.routeId)}">
+          <tr class="${isAdmin ? "route-sortable-row" : ""}" data-route-type="${escapeHtml(routeType)}" data-route-id="${escapeHtml(route.routeId)}">
             <td>${escapeCell(routeType)}</td>
             <td>
               <strong>${escapeCell(route.providerLabel)}</strong>
@@ -2288,10 +2304,14 @@ function renderAdminOverview() {
             <td>
               ${
                 isAdmin
-                  ? `<div class="admin-table-actions">
-                      <button type="button" class="ghost-button compact-button" data-action="route-up" ${index === 0 ? "disabled" : ""}>${escapeHtml(t("actions.up"))}</button>
-                      <button type="button" class="ghost-button compact-button" data-action="route-down" ${index === routes.length - 1 ? "disabled" : ""}>${escapeHtml(t("actions.down"))}</button>
-                    </div>`
+                  ? `<button
+                      type="button"
+                      class="route-drag-handle"
+                      data-drag-handle="route"
+                      draggable="true"
+                      aria-label="${escapeHtml(t("admin.dragToReorder"))}"
+                      title="${escapeHtml(t("admin.dragToReorder"))}"
+                    ></button>`
                   : `<span class="table-readonly">${escapeHtml(t("common.adminOnly"))}</span>`
               }
             </td>
@@ -2851,15 +2871,22 @@ async function setAutoRouteEnabled(routeType, routeId, enabled) {
   await saveAutoRoutingOverrides(groups);
 }
 
-async function moveAutoRoute(routeType, routeId, direction) {
+async function reorderAutoRoute(routeType, routeId, targetRouteId, placement = "before") {
   const groups = autoRouteGroupsForDisplay();
   const routes = groups[routeType] || [];
-  const index = routes.findIndex((route) => route.routeId === routeId);
-  const nextIndex = index + direction;
-  if (index < 0 || nextIndex < 0 || nextIndex >= routes.length) {
+  const fromIndex = routes.findIndex((route) => route.routeId === routeId);
+  const targetIndex = routes.findIndex((route) => route.routeId === targetRouteId);
+  if (fromIndex < 0 || targetIndex < 0 || fromIndex === targetIndex) {
     return;
   }
-  [routes[index], routes[nextIndex]] = [routes[nextIndex], routes[index]];
+
+  const [movedRoute] = routes.splice(fromIndex, 1);
+  let insertIndex = placement === "after" ? targetIndex + 1 : targetIndex;
+  if (fromIndex < targetIndex) {
+    insertIndex -= 1;
+  }
+  insertIndex = Math.max(0, Math.min(insertIndex, routes.length));
+  routes.splice(insertIndex, 0, movedRoute);
   await saveAutoRoutingOverrides(groups);
 }
 
@@ -2943,29 +2970,76 @@ els.adminAutoRoutingTable?.addEventListener("change", async (event) => {
   });
 });
 
-els.adminAutoRoutingTable?.addEventListener("click", async (event) => {
+els.adminAutoRoutingTable?.addEventListener("dragstart", (event) => {
   if (!state.me?.isAdmin) {
     return;
   }
-  const button = event.target.closest("button[data-action]");
-  if (!button) {
+  const handle = event.target.closest("[data-drag-handle='route']");
+  if (!handle) {
     return;
   }
-  const row = button.closest("tr[data-route-type][data-route-id]");
+  const row = handle.closest("tr[data-route-type][data-route-id]");
   if (!row) {
     return;
   }
-  try {
-    if (button.dataset.action === "route-up") {
-      await moveAutoRoute(row.dataset.routeType, row.dataset.routeId, -1);
-      return;
-    }
-    if (button.dataset.action === "route-down") {
-      await moveAutoRoute(row.dataset.routeType, row.dataset.routeId, 1);
-    }
-  } catch (error) {
-    await showErrorDialog(error, t("admin.updateFailed"));
+
+  autoRouteDragState = {
+    routeType: row.dataset.routeType,
+    routeId: row.dataset.routeId,
+  };
+  clearAutoRouteDropIndicators();
+  row.classList.add("route-dragging");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", row.dataset.routeId);
   }
+});
+
+els.adminAutoRoutingTable?.addEventListener("dragover", (event) => {
+  if (!state.me?.isAdmin || !autoRouteDragState) {
+    return;
+  }
+  const row = event.target.closest("tr[data-route-type][data-route-id]");
+  if (!row || row.dataset.routeType !== autoRouteDragState.routeType || row.dataset.routeId === autoRouteDragState.routeId) {
+    return;
+  }
+
+  event.preventDefault();
+  const placement = routeDropPlacement(row, event.clientY);
+  clearAutoRouteDropIndicators();
+  els.adminAutoRoutingTable
+    ?.querySelector(`tr[data-route-type="${autoRouteDragState.routeType}"][data-route-id="${autoRouteDragState.routeId}"]`)
+    ?.classList.add("route-dragging");
+  row.classList.add(placement === "before" ? "route-drop-before" : "route-drop-after");
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "move";
+  }
+});
+
+els.adminAutoRoutingTable?.addEventListener("drop", async (event) => {
+  if (!state.me?.isAdmin || !autoRouteDragState) {
+    return;
+  }
+  const row = event.target.closest("tr[data-route-type][data-route-id]");
+  if (!row || row.dataset.routeType !== autoRouteDragState.routeType || row.dataset.routeId === autoRouteDragState.routeId) {
+    clearAutoRouteDropIndicators();
+    autoRouteDragState = null;
+    return;
+  }
+
+  event.preventDefault();
+  const dragState = autoRouteDragState;
+  const placement = routeDropPlacement(row, event.clientY);
+  clearAutoRouteDropIndicators();
+  autoRouteDragState = null;
+  await reorderAutoRoute(dragState.routeType, dragState.routeId, row.dataset.routeId, placement).catch((error) => {
+    return showErrorDialog(error, t("admin.updateFailed"));
+  });
+});
+
+els.adminAutoRoutingTable?.addEventListener("dragend", () => {
+  clearAutoRouteDropIndicators();
+  autoRouteDragState = null;
 });
 
 els.adminUsersTable?.addEventListener("click", async (event) => {

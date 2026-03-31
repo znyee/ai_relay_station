@@ -1329,6 +1329,13 @@ button:disabled {
   gap: 8px;
 }
 
+.route-sortable-row td {
+  transition:
+    background 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
 .table-toggle {
   display: inline-flex;
   align-items: center;
@@ -1355,6 +1362,42 @@ button:disabled {
   color: var(--accent);
   font: 600 11px/1 var(--mono);
   letter-spacing: 0.08em;
+}
+
+.route-drag-handle {
+  position: relative;
+  min-height: 40px;
+  min-width: 42px;
+  padding: 0;
+  border-color: rgba(29, 29, 31, 0.06);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 248, 252, 0.8));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    0 6px 14px rgba(15, 18, 28, 0.04);
+  cursor: grab;
+}
+
+.route-drag-handle::before {
+  content: "::::";
+  color: var(--ink-faint);
+  font: 700 11px/1 var(--mono);
+  letter-spacing: 0.08em;
+}
+
+.route-drag-handle:active {
+  cursor: grabbing;
+}
+
+.route-sortable-row.route-dragging td {
+  opacity: 0.56;
+}
+
+.route-sortable-row.route-drop-before td {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.route-sortable-row.route-drop-after td {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .admin-user-records {
@@ -1660,6 +1703,18 @@ button:disabled {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
     0 10px 20px rgba(0, 0, 0, 0.18);
+}
+
+:root[data-theme="dark"] .route-drag-handle {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: linear-gradient(180deg, rgba(30, 39, 51, 0.96), rgba(17, 24, 35, 0.9));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 10px 20px rgba(0, 0, 0, 0.18);
+}
+
+:root[data-theme="dark"] .route-drag-handle::before {
+  color: var(--ink-soft);
 }
 
 :root[data-theme="dark"] .mode-button:hover,
