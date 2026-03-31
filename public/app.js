@@ -29,7 +29,8 @@ const state = {
 const CHAT_PROVIDER_STORAGE_KEY = "relay.chatProviderId.v2";
 const CHAT_MODEL_STORAGE_KEY_PREFIX = "relay.chatModel.v2.";
 const THEME_STORAGE_KEY = "relay.theme.v1";
-const JOB_POLL_INTERVAL_MS = 2000;
+const JOB_POLL_INTERVAL_MS = 4000;
+const ADMIN_POLL_INTERVAL_MS = 12000;
 const ATTACHMENT_DOWNLOAD_DEBOUNCE_MS = 1500;
 const ROUTING_PRIORITY_BASE = 1000;
 const ROUTING_PRIORITY_STEP = 10;
@@ -122,11 +123,29 @@ const els = {
   adminAutoRoutingTable: document.getElementById("admin-auto-routing-table"),
   adminDispatchTable: document.getElementById("admin-dispatch-table"),
   adminAuthTable: document.getElementById("admin-auth-table"),
+  modalRoot: document.getElementById("modal-root"),
+  modalEyebrow: document.getElementById("modal-eyebrow"),
+  modalTitle: document.getElementById("modal-title"),
+  modalMessage: document.getElementById("modal-message"),
+  modalInputRow: document.getElementById("modal-input-row"),
+  modalInputLabel: document.getElementById("modal-input-label"),
+  modalInput: document.getElementById("modal-input"),
+  modalError: document.getElementById("modal-error"),
+  modalCancelButton: document.getElementById("modal-cancel-button"),
+  modalConfirmButton: document.getElementById("modal-confirm-button"),
 };
 
 let jobsRefreshInFlight = false;
+let adminOverviewRefreshPromise = null;
 let messageRenderFrame = 0;
+let jobsPollTimer = 0;
+let adminPollTimer = 0;
 const attachmentDownloads = new Map();
+const modalState = {
+  resolve: null,
+  options: null,
+  previouslyFocused: null,
+};
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -256,6 +275,203 @@ async function copyText(text) {
     return;
   }
   copyTextFallback(text);
+}
+
+function closeModal(result) {
+  if (!modalState.resolve) {
+    return;
+  }
+
+  const resolve = modalState.resolve;
+  const previouslyFocused = modalState.previouslyFocused;
+  modalState.resolve = null;
+  modalState.options = null;
+  modalState.previouslyFocused = null;
+  els.modalRoot.classList.add("hidden");
+  els.modalRoot.setAttribute("aria-hidden", "true");
+  els.appShell.classList.remove("modal-open");
+  els.modalError.classList.add("hidden");
+  els.modalError.textContent = "";
+
+  if (previouslyFocused && typeof previouslyFocused.focus === "function") {
+    window.requestAnimationFrame(() => previouslyFocused.focus());
+  }
+
+  resolve(result);
+}
+
+function openModal(options = {}) {
+  if (modalState.resolve) {
+    closeModal(null);
+  }
+
+  const {
+    eyebrow = "",
+    title = "Notice",
+    message = "",
+    confirmText = "Continue",
+    cancelText = "Cancel",
+    showCancel = true,
+    tone = "default",
+    input = null,
+  } = options;
+
+  els.modalEyebrow.textContent = eyebrow;
+  els.modalEyebrow.classList.toggle("hidden", !eyebrow);
+  els.modalTitle.textContent = title;
+  els.modalMessage.textContent = message;
+  els.modalCancelButton.textContent = cancelText;
+  els.modalCancelButton.classList.toggle("hidden", !showCancel);
+  els.modalConfirmButton.textContent = confirmText;
+  els.modalConfirmButton.classList.toggle("modal-confirm-danger", tone === "danger");
+  els.modalError.classList.add("hidden");
+  els.modalError.textContent = "";
+
+  if (input) {
+    els.modalInputRow.classList.remove("hidden");
+    els.modalInputLabel.textContent = input.label || "Value";
+    els.modalInput.type = input.type || "text";
+    els.modalInput.placeholder = input.placeholder || "";
+    els.modalInput.value = input.value || "";
+    els.modalInput.autocomplete = input.autocomplete || "off";
+  } else {
+    els.modalInputRow.classList.add("hidden");
+    els.modalInput.type = "text";
+    els.modalInput.value = "";
+    els.modalInput.placeholder = "";
+    els.modalInput.autocomplete = "off";
+  }
+
+  els.modalRoot.classList.remove("hidden");
+  els.modalRoot.setAttribute("aria-hidden", "false");
+  els.appShell.classList.add("modal-open");
+  modalState.options = options;
+  modalState.previouslyFocused = document.activeElement;
+
+  return new Promise((resolve) => {
+    modalState.resolve = resolve;
+    window.requestAnimationFrame(() => {
+      if (input) {
+        els.modalInput.focus();
+        els.modalInput.select();
+        return;
+      }
+      els.modalConfirmButton.focus();
+    });
+  });
+}
+
+function showAlertDialog(message, options = {}) {
+  return openModal({
+    title: options.title || "Notice",
+    message: String(message || ""),
+    confirmText: options.confirmText || "Close",
+    showCancel: false,
+    tone: options.tone || "default",
+  });
+}
+
+function showConfirmDialog(message, options = {}) {
+  return openModal({
+    title: options.title || "Confirm",
+    message: String(message || ""),
+    confirmText: options.confirmText || "Continue",
+    cancelText: options.cancelText || "Cancel",
+    showCancel: true,
+    tone: options.tone || "default",
+  });
+}
+
+function showPromptDialog(message, options = {}) {
+  return openModal({
+    title: options.title || "Input",
+    message: String(message || ""),
+    confirmText: options.confirmText || "Save",
+    cancelText: options.cancelText || "Cancel",
+    showCancel: true,
+    tone: options.tone || "default",
+    input: {
+      label: options.inputLabel || "Value",
+      placeholder: options.placeholder || "",
+      value: options.value || "",
+      type: options.inputType || "text",
+      autocomplete: options.autocomplete || "off",
+    },
+  });
+}
+
+function showErrorDialog(error, title = "Error") {
+  const message = error instanceof Error ? error.message : String(error || "Unexpected error.");
+  return showAlertDialog(message, {
+    title,
+    tone: "danger",
+  });
+}
+
+function hasActiveJobActivity() {
+  return (
+    state.jobs.some((job) => job.status === "pending" || job.status === "running") ||
+    state.selectedJob?.status === "pending" ||
+    state.selectedJob?.status === "running"
+  );
+}
+
+function shouldPollJobs() {
+  return Boolean(state.me) && (state.mode === "code" || hasActiveJobActivity());
+}
+
+function shouldPollAdminOverview() {
+  return Boolean(state.me) && state.mode === "admin";
+}
+
+function clearPollTimers() {
+  if (jobsPollTimer) {
+    window.clearTimeout(jobsPollTimer);
+    jobsPollTimer = 0;
+  }
+  if (adminPollTimer) {
+    window.clearTimeout(adminPollTimer);
+    adminPollTimer = 0;
+  }
+}
+
+function scheduleJobsPoll(delay = JOB_POLL_INTERVAL_MS) {
+  if (jobsPollTimer) {
+    window.clearTimeout(jobsPollTimer);
+    jobsPollTimer = 0;
+  }
+  if (!shouldPollJobs()) {
+    return;
+  }
+  jobsPollTimer = window.setTimeout(async () => {
+    jobsPollTimer = 0;
+    if (document.visibilityState === "hidden") {
+      return;
+    }
+    await refreshJobs().catch(() => {});
+  }, delay);
+}
+
+function scheduleAdminPoll(delay = ADMIN_POLL_INTERVAL_MS) {
+  if (adminPollTimer) {
+    window.clearTimeout(adminPollTimer);
+    adminPollTimer = 0;
+  }
+  if (!shouldPollAdminOverview()) {
+    return;
+  }
+  adminPollTimer = window.setTimeout(async () => {
+    adminPollTimer = 0;
+    if (document.visibilityState === "hidden") {
+      return;
+    }
+    await refreshAdminOverview().catch(() => {});
+  }, delay);
+}
+
+function syncPolling() {
+  scheduleJobsPoll();
+  scheduleAdminPoll();
 }
 
 function codeBlockLanguage(code) {
@@ -412,8 +628,18 @@ function setBooting(isBooting) {
 }
 
 function showLogin() {
+  clearPollTimers();
   state.me = null;
+  state.chat = null;
+  state.capabilities = null;
   state.adminOverview = null;
+  state.conversations = [];
+  state.selectedConversationId = null;
+  state.messages = [];
+  state.jobs = [];
+  state.selectedJobId = null;
+  state.selectedJob = null;
+  state.selectedJobLogText = "";
   state.adminSelectedUserId = null;
   state.adminSelectedUser = null;
   state.adminSelectedUserConversations = [];
@@ -428,6 +654,7 @@ function showLogin() {
 function showApp() {
   els.loginScreen.classList.add("hidden");
   els.appScreen.classList.remove("hidden");
+  syncPolling();
 }
 
 function getChatProvider(providerId) {
@@ -540,6 +767,10 @@ function setMode(mode) {
   if (mode === "admin" && state.me) {
     refreshAdminOverview().catch(() => {});
   }
+  if (mode === "code" && state.me) {
+    refreshJobs().catch(() => {});
+  }
+  syncPolling();
 }
 
 function attachmentMarkup(attachments, variant = "default") {
@@ -1384,12 +1615,26 @@ async function refreshAdminOverview() {
   if (!state.me) {
     state.adminOverview = null;
     renderAdminOverview();
+    syncPolling();
     return;
   }
 
-  const payload = await api("/api/admin/overview");
-  state.adminOverview = payload;
-  renderAdminOverview();
+  if (adminOverviewRefreshPromise) {
+    return adminOverviewRefreshPromise;
+  }
+
+  adminOverviewRefreshPromise = (async () => {
+    const payload = await api("/api/admin/overview");
+    state.adminOverview = payload;
+    renderAdminOverview();
+  })();
+
+  try {
+    await adminOverviewRefreshPromise;
+  } finally {
+    adminOverviewRefreshPromise = null;
+    syncPolling();
+  }
 }
 
 async function bootstrap() {
@@ -1591,6 +1836,16 @@ async function sendChatMessage(content, attachments) {
 }
 
 async function refreshJobs() {
+  if (!state.me) {
+    state.jobs = [];
+    state.selectedJobId = null;
+    state.selectedJob = null;
+    state.selectedJobLogText = "";
+    renderJobs();
+    renderJobDetail();
+    syncPolling();
+    return;
+  }
   if (jobsRefreshInFlight) {
     return;
   }
@@ -1614,6 +1869,7 @@ async function refreshJobs() {
     }
   } finally {
     jobsRefreshInFlight = false;
+    syncPolling();
   }
 }
 
@@ -1819,23 +2075,28 @@ els.logoutButton.addEventListener("click", async () => {
 
 els.adminRefreshButton?.addEventListener("click", async () => {
   await refreshAdminOverview().catch((error) => {
-    window.alert(error.message);
+    return showErrorDialog(error, "Refresh failed");
   });
 });
 
 els.adminDispatchForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   await saveDispatchSettings().catch((error) => {
-    window.alert(error.message);
+    return showErrorDialog(error, "Save failed");
   });
 });
 
 els.adminRoutingResetButton?.addEventListener("click", async () => {
-  if (!window.confirm("Reset dispatch settings and auto routing to defaults?")) {
+  const confirmed = await showConfirmDialog("Reset dispatch settings and auto routing to defaults?", {
+    title: "Reset routing",
+    confirmText: "Reset",
+    tone: "danger",
+  });
+  if (!confirmed) {
     return;
   }
   await resetRoutingConfig().catch((error) => {
-    window.alert(error.message);
+    return showErrorDialog(error, "Reset failed");
   });
 });
 
@@ -1852,7 +2113,7 @@ els.adminAutoRoutingTable?.addEventListener("change", async (event) => {
     return;
   }
   await setAutoRouteEnabled(row.dataset.routeType, row.dataset.routeId, input.checked).catch((error) => {
-    window.alert(error.message);
+    return showErrorDialog(error, "Update failed");
   });
 });
 
@@ -1877,7 +2138,7 @@ els.adminAutoRoutingTable?.addEventListener("click", async (event) => {
       await moveAutoRoute(row.dataset.routeType, row.dataset.routeId, 1);
     }
   } catch (error) {
-    window.alert(error.message);
+    await showErrorDialog(error, "Update failed");
   }
 });
 
@@ -1902,14 +2163,25 @@ els.adminUsersTable?.addEventListener("click", async (event) => {
       return;
     }
     if (action === "signout") {
-      if (!window.confirm(`Sign out all active sessions for "${username}"?`)) {
+      const confirmed = await showConfirmDialog(`Sign out all active sessions for "${username}"?`, {
+        title: "Sign out sessions",
+        confirmText: "Sign Out",
+        tone: "danger",
+      });
+      if (!confirmed) {
         return;
       }
       await revokeAdminUserSessions(userId);
       return;
     }
     if (action === "password") {
-      const nextPassword = window.prompt(`Set a new password for ${username}:`, "");
+      const nextPassword = await showPromptDialog(`Set a new password for ${username}:`, {
+        title: "Change password",
+        confirmText: "Save Password",
+        inputLabel: "New password",
+        inputType: "password",
+        autocomplete: "new-password",
+      });
       if (nextPassword === null) {
         return;
       }
@@ -1925,13 +2197,18 @@ els.adminUsersTable?.addEventListener("click", async (event) => {
       return;
     }
     if (action === "delete") {
-      if (!window.confirm(`Delete user "${username}" and all of their data?`)) {
+      const confirmed = await showConfirmDialog(`Delete user "${username}" and all of their data?`, {
+        title: "Delete user",
+        confirmText: "Delete",
+        tone: "danger",
+      });
+      if (!confirmed) {
         return;
       }
       await deleteAdminUser(userId);
     }
   } catch (error) {
-    window.alert(error.message);
+    await showErrorDialog(error, "User update failed");
   }
 });
 
@@ -1948,7 +2225,7 @@ els.adminUserRepoForm?.addEventListener("submit", async (event) => {
   try {
     await saveAdminUserRepoBinding();
   } catch (error) {
-    window.alert(error.message);
+    await showErrorDialog(error, "Save failed");
   }
 });
 
@@ -1962,7 +2239,7 @@ els.chatPinButton.addEventListener("click", async () => {
     return;
   }
   await setConversationPinned(conversation.id, !conversation.isPinned).catch((error) => {
-    window.alert(error.message);
+    return showErrorDialog(error, "Update failed");
   });
 });
 
@@ -1971,11 +2248,16 @@ els.chatDeleteButton.addEventListener("click", async () => {
   if (!conversation) {
     return;
   }
-  if (!window.confirm(`Delete conversation "${conversation.title}"?`)) {
+  const confirmed = await showConfirmDialog(`Delete conversation "${conversation.title}"?`, {
+    title: "Delete chat",
+    confirmText: "Delete",
+    tone: "danger",
+  });
+  if (!confirmed) {
     return;
   }
   await deleteConversation(conversation.id).catch((error) => {
-    window.alert(error.message);
+    return showErrorDialog(error, "Delete failed");
   });
 });
 
@@ -1985,7 +2267,7 @@ els.jobPinButton.addEventListener("click", async () => {
     return;
   }
   await setJobPinned(job.id, !job.isPinned).catch((error) => {
-    window.alert(error.message);
+    return showErrorDialog(error, "Update failed");
   });
 });
 
@@ -1997,11 +2279,16 @@ els.jobDeleteButton.addEventListener("click", async () => {
   if (job.status === "running") {
     return;
   }
-  if (!window.confirm(`Delete code job "${jobTitle(job)}"?`)) {
+  const confirmed = await showConfirmDialog(`Delete code job "${jobTitle(job)}"?`, {
+    title: "Delete job",
+    confirmText: "Delete",
+    tone: "danger",
+  });
+  if (!confirmed) {
     return;
   }
   await deleteJob(job.id).catch((error) => {
-    window.alert(error.message);
+    return showErrorDialog(error, "Delete failed");
   });
 });
 
@@ -2086,6 +2373,45 @@ document.addEventListener("click", (event) => {
   window.setTimeout(() => setAttachmentDownloadPending(link, false), ATTACHMENT_DOWNLOAD_DEBOUNCE_MS + 120);
 });
 
+els.modalCancelButton?.addEventListener("click", () => {
+  closeModal(null);
+});
+
+els.modalConfirmButton?.addEventListener("click", () => {
+  if (els.modalInputRow.classList.contains("hidden")) {
+    closeModal(true);
+    return;
+  }
+  closeModal(els.modalInput.value);
+});
+
+els.modalRoot?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-modal-dismiss='1']")) {
+    closeModal(null);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (!modalState.resolve) {
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeModal(null);
+    return;
+  }
+  if (event.key === "Enter" && document.activeElement === els.modalInput) {
+    event.preventDefault();
+    closeModal(els.modalInput.value);
+  }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    syncPolling();
+  }
+});
+
 for (const button of els.themeButtons) {
   button.addEventListener("click", () => {
     applyThemeMode(button.dataset.themeMode || "light");
@@ -2109,7 +2435,7 @@ els.chatForm.addEventListener("submit", async (event) => {
     els.chatInput.value = content;
     state.pendingChatAttachments = attachments;
     renderPendingAttachmentList("chat");
-    window.alert(error.message);
+    return showErrorDialog(error, "Message failed");
   });
 });
 
@@ -2126,7 +2452,7 @@ els.codeForm.addEventListener("submit", async (event) => {
     els.codeInput.value = prompt;
     state.pendingCodeAttachments = attachments;
     renderPendingAttachmentList("code");
-    window.alert(error.message);
+    return showErrorDialog(error, "Queue failed");
   });
 });
 
@@ -2137,18 +2463,6 @@ for (const button of els.modeButtons) {
 for (const button of els.authModeButtons) {
   button.addEventListener("click", () => setAuthMode(button.dataset.authMode));
 }
-
-setInterval(() => {
-  if (document.visibilityState === "hidden") {
-    return;
-  }
-  if (state.me) {
-    refreshJobs().catch(() => {});
-  }
-  if (state.me && state.mode === "admin") {
-    refreshAdminOverview().catch(() => {});
-  }
-}, JOB_POLL_INTERVAL_MS);
 
 renderAuthMode();
 applyThemeMode(state.themeMode, { persist: false });

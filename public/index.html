@@ -397,6 +397,26 @@
           </section>
         </main>
       </section>
+
+      <div id="modal-root" class="modal-root hidden" aria-hidden="true">
+        <div class="modal-backdrop" data-modal-dismiss="1"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <div class="modal-header">
+            <p id="modal-eyebrow" class="eyebrow hidden">Action</p>
+            <h2 id="modal-title">Notice</h2>
+          </div>
+          <p id="modal-message" class="modal-message"></p>
+          <label id="modal-input-row" class="modal-input-row hidden">
+            <span id="modal-input-label">Value</span>
+            <input id="modal-input" type="text" />
+          </label>
+          <p id="modal-error" class="error-text hidden"></p>
+          <div class="modal-actions">
+            <button id="modal-cancel-button" type="button" class="ghost-button compact-button">Cancel</button>
+            <button id="modal-confirm-button" type="button" class="compact-button">Continue</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="/app.js"></script>
