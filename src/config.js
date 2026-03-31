@@ -6,6 +6,12 @@ export function loadConfig() {
   const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
   const dataDir = process.env.DATA_DIR || path.join(rootDir, "data");
   const publicDir = path.join(rootDir, "public");
+  const codexCliProxyUrl =
+    process.env.CODEX_CLI_PROXY_URL === undefined ? "http://127.0.0.1:7892" : process.env.CODEX_CLI_PROXY_URL.trim();
+  const codexCliNoProxy =
+    process.env.CODEX_CLI_NO_PROXY === undefined
+      ? "127.0.0.1,localhost,::1"
+      : process.env.CODEX_CLI_NO_PROXY.trim();
   const workspaceRoot =
     process.env.WORKSPACE_ROOT ||
     path.join(dataDir, "workspaces");
@@ -39,6 +45,8 @@ export function loadConfig() {
     defaultChatProviderId: chat.defaultProviderId,
     codexBin: process.env.CODEX_BIN || "codex",
     codexTimeoutMs: Number(process.env.CODEX_TIMEOUT_MS || 30 * 60 * 1000),
+    codexCliProxyUrl,
+    codexCliNoProxy,
     codeQueueConcurrency: Number(process.env.CODE_QUEUE_CONCURRENCY || 1),
     codeAutoPush: process.env.CODE_AUTO_PUSH !== "0",
     gitPushTimeoutMs: Number(process.env.GIT_PUSH_TIMEOUT_MS || 5 * 60 * 1000),

@@ -94,6 +94,7 @@ http://127.0.0.1:3210
 - If the user has a bound repo, clones it and mirrors final changes into `data/workspaces/<user>/<job>/record`
 - Copies uploaded job attachments into `.relay-attachments/` inside the workspace
 - Runs `codex exec --dangerously-bypass-approvals-and-sandbox --ephemeral`
+- Injects Code mode-only proxy env by default: `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY=http://127.0.0.1:7892`
 - If the user has a bound repo and files changed, stages everything, creates a Git commit, and pushes to the repo's default branch
 - Stores:
   - final message
@@ -103,6 +104,8 @@ http://127.0.0.1:3210
   - raw codex event log path
 
 This is intentionally a trusted-host MVP. The process-level isolation comes from per-job working directories and queueing, not from containers or OS sandboxing.
+
+You can override or disable the Code mode proxy with `CODEX_CLI_PROXY_URL` and `CODEX_CLI_NO_PROXY`.
 
 ## Current limits
 

@@ -13,6 +13,23 @@ const CODEX_ENV_BLOCKLIST = [
   "OPENAI_PROJECT",
 ];
 
+const CODEX_PROXY_ENV_KEYS = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+];
+
+function mergeNoProxy(existingValue, configuredValue) {
+  const entries = `${existingValue || ""},${configuredValue || ""}`
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return [...new Set(entries)].join(",");
+}
+
 function execProcess(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -104,10 +121,26 @@ export function buildCodexPrompt(prompt, attachments = []) {
   return sections.join("\n");
 }
 
-export function buildCodexChildEnv(baseEnv = process.env) {
+export function buildCodexChildEnv(baseEnv = process.env, options = {}) {
   const env = { ...baseEnv };
   for (const key of CODEX_ENV_BLOCKLIST) {
     delete env[key];
+  }
+
+  const proxyUrl =
+    options.proxyUrl === undefined ? "http://127.0.0.1:7892" : String(options.proxyUrl || "").trim();
+  const noProxy =
+    options.noProxy === undefined ? "127.0.0.1,localhost,::1" : String(options.noProxy || "").trim();
+
+  if (proxyUrl) {
+    for (const key of CODEX_PROXY_ENV_KEYS) {
+      env[key] = proxyUrl;
+    }
+    const mergedNoProxy = mergeNoProxy(env.NO_PROXY || env.no_proxy, noProxy);
+    if (mergedNoProxy) {
+      env.NO_PROXY = mergedNoProxy;
+      env.no_proxy = mergedNoProxy;
+    }
   }
   return env;
 }
@@ -461,7 +494,10 @@ export async function runCodexJob({ config, user, job }) {
   const stagedAttachments = await stageWorkspaceAttachments(job.attachments || [], workspacePath);
 
   const args = buildCodexExecArgs(workspacePath, finalMessagePath);
-  const codexEnv = buildCodexChildEnv();
+  const codexEnv = buildCodexChildEnv(process.env, {
+    proxyUrl: config.codexCliProxyUrl,
+    noProxy: config.codexCliNoProxy,
+  });
 
   const child = spawn(config.codexBin, args, {
     cwd: workspacePath,

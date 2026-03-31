@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { buildCodexChildEnv, buildCodexPrompt, getJobPaths, mirrorWorkspaceOutputs } from "../src/codex-runner.js";
 
-test("buildCodexChildEnv strips chat-side OpenAI overrides and keeps unrelated env", () => {
+test("buildCodexChildEnv strips chat-side OpenAI overrides and injects codex proxy env", () => {
   const env = buildCodexChildEnv({
     PATH: "/usr/bin",
     HOME: "/home/ubuntu",
@@ -21,12 +21,50 @@ test("buildCodexChildEnv strips chat-side OpenAI overrides and keeps unrelated e
   assert.equal(env.PATH, "/usr/bin");
   assert.equal(env.HOME, "/home/ubuntu");
   assert.equal(env.DEEPSEEK_API_KEY, "deepseek-key");
+  assert.equal(env.HTTP_PROXY, "http://127.0.0.1:7892");
+  assert.equal(env.HTTPS_PROXY, "http://127.0.0.1:7892");
+  assert.equal(env.ALL_PROXY, "http://127.0.0.1:7892");
+  assert.equal(env.http_proxy, "http://127.0.0.1:7892");
+  assert.equal(env.https_proxy, "http://127.0.0.1:7892");
+  assert.equal(env.all_proxy, "http://127.0.0.1:7892");
+  assert.equal(env.NO_PROXY, "127.0.0.1,localhost,::1");
+  assert.equal(env.no_proxy, "127.0.0.1,localhost,::1");
   assert.equal("OPENAI_API_KEY" in env, false);
   assert.equal("OPENAI_API_BASE" in env, false);
   assert.equal("OPENAI_BASE_URL" in env, false);
   assert.equal("OPENAI_ORGANIZATION" in env, false);
   assert.equal("OPENAI_ORG_ID" in env, false);
   assert.equal("OPENAI_PROJECT" in env, false);
+});
+
+test("buildCodexChildEnv allows overriding or disabling the codex proxy env", () => {
+  const overridden = buildCodexChildEnv(
+    {
+      NO_PROXY: "metadata.internal",
+    },
+    {
+      proxyUrl: "http://127.0.0.1:8899",
+      noProxy: "127.0.0.1,localhost",
+    },
+  );
+  assert.equal(overridden.HTTP_PROXY, "http://127.0.0.1:8899");
+  assert.equal(overridden.HTTPS_PROXY, "http://127.0.0.1:8899");
+  assert.equal(overridden.NO_PROXY, "metadata.internal,127.0.0.1,localhost");
+  assert.equal(overridden.no_proxy, "metadata.internal,127.0.0.1,localhost");
+
+  const disabled = buildCodexChildEnv(
+    {
+      HTTP_PROXY: "http://existing-proxy.invalid:8080",
+      NO_PROXY: "metadata.internal",
+    },
+    {
+      proxyUrl: "",
+      noProxy: "",
+    },
+  );
+  assert.equal(disabled.HTTP_PROXY, "http://existing-proxy.invalid:8080");
+  assert.equal(disabled.NO_PROXY, "metadata.internal");
+  assert.equal("no_proxy" in disabled, false);
 });
 
 test("buildCodexPrompt describes an isolated workspace instead of a repository", () => {
