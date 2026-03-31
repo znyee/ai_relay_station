@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { copyAttachmentsFromDisk, stageWorkspaceAttachments, storeTextAttachments, summarizeAttachment } from "./attachments.js";
@@ -22,12 +23,52 @@ const CODEX_PROXY_ENV_KEYS = [
   "all_proxy",
 ];
 
+const CODEX_PATH_SUFFIXES = [".npm-global/bin", ".local/bin", "bin"];
+const CODEX_SYSTEM_PATHS = ["/usr/local/bin", "/usr/bin", "/bin"];
+
 function mergeNoProxy(existingValue, configuredValue) {
   const entries = `${existingValue || ""},${configuredValue || ""}`
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
   return [...new Set(entries)].join(",");
+}
+
+function uniquePathEntries(entries = []) {
+  return [...new Set(entries.map((entry) => String(entry || "").trim()).filter(Boolean))];
+}
+
+export function buildCodexRuntimePath(existingPath = "", homeDir = "") {
+  const homeEntries = homeDir ? CODEX_PATH_SUFFIXES.map((suffix) => path.join(homeDir, suffix)) : [];
+  const existingEntries = String(existingPath || "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return uniquePathEntries([...homeEntries, ...existingEntries, ...CODEX_SYSTEM_PATHS]).join(path.delimiter);
+}
+
+export async function resolveExecutablePath(command, envPath = "") {
+  const text = String(command || "").trim();
+  if (!text || text.includes(path.sep) || text.startsWith(".")) {
+    return text;
+  }
+
+  const entries = String(envPath || "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  for (const entry of entries) {
+    const candidate = path.join(entry, text);
+    try {
+      await fs.access(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+
+  return text;
 }
 
 function execProcess(command, args, options = {}) {
@@ -125,6 +166,18 @@ export function buildCodexChildEnv(baseEnv = process.env, options = {}) {
   const env = { ...baseEnv };
   for (const key of CODEX_ENV_BLOCKLIST) {
     delete env[key];
+  }
+
+  const homeDir =
+    options.homeDir === undefined
+      ? String(env.HOME || env.USERPROFILE || "").trim()
+      : String(options.homeDir || "").trim();
+  const runtimePath = buildCodexRuntimePath(env.PATH || env.Path || "", homeDir);
+  if (runtimePath) {
+    env.PATH = runtimePath;
+    if ("Path" in env) {
+      env.Path = runtimePath;
+    }
   }
 
   const proxyUrl =
@@ -497,9 +550,12 @@ export async function runCodexJob({ config, user, job }) {
   const codexEnv = buildCodexChildEnv(process.env, {
     proxyUrl: config.codexCliProxyUrl,
     noProxy: config.codexCliNoProxy,
+    homeDir: config.hostUserHome,
   });
+  const codexCommand = await resolveExecutablePath(config.codexBin, codexEnv.PATH || codexEnv.Path || "");
+  const commandPreview = `${codexCommand} ${args.join(" ")}`;
 
-  const child = spawn(config.codexBin, args, {
+  const child = spawn(codexCommand, args, {
     cwd: workspacePath,
     env: codexEnv,
     stdio: ["pipe", "pipe", "pipe"],
@@ -554,7 +610,7 @@ export async function runCodexJob({ config, user, job }) {
       ok: false,
       workspacePath,
       logPath: eventsPath,
-      commandPreview: `${config.codexBin} ${args.join(" ")}`,
+      commandPreview,
       errorText,
       outputAttachments,
       ...gitState,
@@ -585,7 +641,7 @@ export async function runCodexJob({ config, user, job }) {
         ok: true,
         workspacePath,
         logPath: eventsPath,
-        commandPreview: `${config.codexBin} ${args.join(" ")}`,
+        commandPreview,
         finalMessage: pushed.finalMessage,
         outputAttachments,
         ...gitState,
@@ -611,7 +667,7 @@ export async function runCodexJob({ config, user, job }) {
         ok: true,
         workspacePath,
         logPath: eventsPath,
-        commandPreview: `${config.codexBin} ${args.join(" ")}`,
+        commandPreview,
         finalMessage: warningText,
         outputAttachments,
         ...gitState,
@@ -632,7 +688,7 @@ export async function runCodexJob({ config, user, job }) {
     ok: true,
     workspacePath,
     logPath: eventsPath,
-    commandPreview: `${config.codexBin} ${args.join(" ")}`,
+    commandPreview,
     finalMessage: finalMessage.trim(),
     outputAttachments,
     ...gitState,

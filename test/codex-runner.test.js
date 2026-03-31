@@ -3,7 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { buildCodexChildEnv, buildCodexPrompt, getJobPaths, mirrorWorkspaceOutputs } from "../src/codex-runner.js";
+import {
+  buildCodexChildEnv,
+  buildCodexPrompt,
+  buildCodexRuntimePath,
+  getJobPaths,
+  mirrorWorkspaceOutputs,
+  resolveExecutablePath,
+} from "../src/codex-runner.js";
 
 test("buildCodexChildEnv strips chat-side OpenAI overrides and injects codex proxy env", () => {
   const env = buildCodexChildEnv({
@@ -18,7 +25,8 @@ test("buildCodexChildEnv strips chat-side OpenAI overrides and injects codex pro
     DEEPSEEK_API_KEY: "deepseek-key",
   });
 
-  assert.equal(env.PATH, "/usr/bin");
+  assert.match(env.PATH, /^\/home\/ubuntu\/\.npm-global\/bin:/);
+  assert.match(env.PATH, /\/usr\/bin/);
   assert.equal(env.HOME, "/home/ubuntu");
   assert.equal(env.DEEPSEEK_API_KEY, "deepseek-key");
   assert.equal(env.HTTP_PROXY, "http://127.0.0.1:7892");
@@ -35,6 +43,16 @@ test("buildCodexChildEnv strips chat-side OpenAI overrides and injects codex pro
   assert.equal("OPENAI_ORGANIZATION" in env, false);
   assert.equal("OPENAI_ORG_ID" in env, false);
   assert.equal("OPENAI_PROJECT" in env, false);
+});
+
+test("buildCodexRuntimePath prepends common user bin directories once", () => {
+  const runtimePath = buildCodexRuntimePath("/usr/bin:/home/test/.local/bin", "/home/test");
+  assert.equal(
+    runtimePath,
+    ["/home/test/.npm-global/bin", "/home/test/.local/bin", "/home/test/bin", "/usr/bin", "/usr/local/bin", "/bin"].join(
+      path.delimiter,
+    ),
+  );
 });
 
 test("buildCodexChildEnv allows overriding or disabling the codex proxy env", () => {
@@ -65,6 +83,28 @@ test("buildCodexChildEnv allows overriding or disabling the codex proxy env", ()
   assert.equal(disabled.HTTP_PROXY, "http://existing-proxy.invalid:8080");
   assert.equal(disabled.NO_PROXY, "metadata.internal");
   assert.equal("no_proxy" in disabled, false);
+});
+
+test("resolveExecutablePath finds codex in the injected user bin path", async () => {
+  const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "relay-codex-home-"));
+  const codexDir = path.join(tempHome, ".npm-global", "bin");
+  const codexPath = path.join(codexDir, "codex");
+  await fs.mkdir(codexDir, { recursive: true });
+  await fs.writeFile(codexPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await fs.chmod(codexPath, 0o755);
+
+  const env = buildCodexChildEnv(
+    {
+      PATH: "/usr/bin",
+    },
+    {
+      homeDir: tempHome,
+      proxyUrl: "http://127.0.0.1:7892",
+      noProxy: "127.0.0.1,localhost,::1",
+    },
+  );
+
+  assert.equal(await resolveExecutablePath("codex", env.PATH), codexPath);
 });
 
 test("buildCodexPrompt describes an isolated workspace instead of a repository", () => {
