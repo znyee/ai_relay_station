@@ -1214,17 +1214,25 @@ function renderAdminOverview() {
               <div class="table-subline">${escapeCell(route.model)}</div>
             </td>
             <td>
-              <label class="table-toggle">
-                <input class="table-checkbox" data-field="enabled" type="checkbox" ${route.enabled ? "checked" : ""} />
-                <span>${escapeCell(route.enabled ? "on" : "off")}</span>
-              </label>
+              ${
+                isAdmin
+                  ? `<label class="table-toggle">
+                      <input class="table-checkbox" data-field="enabled" type="checkbox" ${route.enabled ? "checked" : ""} />
+                      <span>${escapeCell(route.enabled ? "on" : "off")}</span>
+                    </label>`
+                  : `<span class="table-readonly">${escapeCell(route.enabled ? "on" : "off")}</span>`
+              }
             </td>
             <td><span class="rank-pill">${escapeHtml(rankLabel(index))}</span></td>
             <td>
-              <div class="admin-table-actions">
-                <button type="button" class="ghost-button compact-button" data-action="route-up" ${index === 0 ? "disabled" : ""}>Up</button>
-                <button type="button" class="ghost-button compact-button" data-action="route-down" ${index === routes.length - 1 ? "disabled" : ""}>Down</button>
-              </div>
+              ${
+                isAdmin
+                  ? `<div class="admin-table-actions">
+                      <button type="button" class="ghost-button compact-button" data-action="route-up" ${index === 0 ? "disabled" : ""}>Up</button>
+                      <button type="button" class="ghost-button compact-button" data-action="route-down" ${index === routes.length - 1 ? "disabled" : ""}>Down</button>
+                    </div>`
+                  : `<span class="table-readonly">Admin only</span>`
+              }
             </td>
             <td>${escapeCell(route.cooldownUntil ? formatDateTime(route.cooldownUntil) : "Active")}</td>
           </tr>
@@ -1799,6 +1807,9 @@ els.adminRoutingResetButton?.addEventListener("click", async () => {
 });
 
 els.adminAutoRoutingTable?.addEventListener("change", async (event) => {
+  if (!state.me?.isAdmin) {
+    return;
+  }
   const input = event.target.closest('input[data-field="enabled"]');
   if (!input) {
     return;
@@ -1813,6 +1824,9 @@ els.adminAutoRoutingTable?.addEventListener("change", async (event) => {
 });
 
 els.adminAutoRoutingTable?.addEventListener("click", async (event) => {
+  if (!state.me?.isAdmin) {
+    return;
+  }
   const button = event.target.closest("button[data-action]");
   if (!button) {
     return;

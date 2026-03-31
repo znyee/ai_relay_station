@@ -1308,6 +1308,11 @@ button:disabled {
   text-transform: capitalize;
 }
 
+.table-readonly {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
 .rank-pill {
   display: inline-flex;
   align-items: center;

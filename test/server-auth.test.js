@@ -131,6 +131,27 @@ test("registration accepts simple passwords and exposes the control overview to 
   assert.ok("apiUsage" in overviewPayload);
   assert.deepEqual(overviewPayload.users, []);
   assert.deepEqual(overviewPayload.authEvents, []);
+
+  const updateRoutingResponse = await fetch(`${server.baseUrl}/api/admin/routing-config`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      cookie,
+    },
+    body: JSON.stringify({
+      routeOverrides: [
+        {
+          routeType: "text",
+          providerId: "alibaba_bailian",
+          model: "qwen-plus-2025-12-01",
+          priority: 260,
+          weight: 1,
+          enabled: true,
+        },
+      ],
+    }),
+  });
+  assert.equal(updateRoutingResponse.status, 403);
 });
 
 test("root can manage users and inspect their conversation history", async (t) => {
