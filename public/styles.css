@@ -30,6 +30,7 @@
   --shell-padding: 28px;
   --top-controls-height: 49px;
   --top-controls-gap: 18px;
+  --content-min-height: calc(100vh - (var(--shell-padding) * 2) - var(--top-controls-height) - var(--top-controls-gap));
 }
 
 :root[data-theme="dark"] {
@@ -176,7 +177,7 @@ button {
 
 .boot-screen {
   display: none;
-  min-height: calc(100vh - (var(--shell-padding) * 2) - var(--top-controls-height) - var(--top-controls-gap));
+  min-height: var(--content-min-height);
   place-items: center;
 }
 
@@ -208,7 +209,7 @@ button {
 
 .login-screen,
 .app-screen {
-  min-height: calc(100vh - (var(--shell-padding) * 2) - var(--top-controls-height) - var(--top-controls-gap));
+  min-height: var(--content-min-height);
 }
 
 .login-screen {
@@ -530,7 +531,7 @@ button:disabled {
   grid-template-rows: auto auto minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 14px;
   padding: 18px;
-  min-height: calc(100vh - 48px);
+  min-height: var(--content-min-height);
 }
 
 .brand-block {
@@ -721,7 +722,7 @@ button:disabled {
 
 .mode-panel,
 .code-grid {
-  min-height: calc(100vh - 48px);
+  min-height: var(--content-min-height);
 }
 
 .mode-panel {
@@ -732,6 +733,13 @@ button:disabled {
   height: 100%;
 }
 
+#chat-mode .hero-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: var(--content-min-height);
+  max-height: var(--content-min-height);
+}
+
 .message-stream {
   display: grid;
   gap: 16px;
@@ -740,6 +748,13 @@ button:disabled {
   overflow: auto;
   margin: 18px 0 24px;
   padding: 6px 6px 6px 0;
+}
+
+#chat-mode .message-stream {
+  min-height: 0;
+  max-height: none;
+  margin-bottom: 16px;
+  padding-right: 6px;
 }
 
 .message {
@@ -983,6 +998,12 @@ button:disabled {
 .composer {
   display: grid;
   gap: 12px;
+}
+
+#chat-form {
+  align-self: end;
+  padding-top: 16px;
+  border-top: 1px solid rgba(29, 29, 31, 0.06);
 }
 
 .composer-actions {
