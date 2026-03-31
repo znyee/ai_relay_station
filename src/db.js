@@ -9,6 +9,7 @@ function parseRows(rows) {
     attachments: safeJsonParse(row.attachments_json, []),
     outputAttachments: safeJsonParse(row.output_attachments_json, []),
     canUseCode: true,
+    language: row.language || "en",
     isAdmin: Boolean(row.is_admin),
     isPinned: Boolean(row.pinned_at),
     failedLoginAttempts: Number(row.failed_login_attempts || 0),
@@ -70,6 +71,7 @@ export function createDatabase(databasePath) {
       repo_url TEXT NOT NULL,
       repo_local_path TEXT,
       repo_default_branch TEXT NOT NULL DEFAULT 'main',
+      language TEXT NOT NULL DEFAULT 'en',
       chat_model TEXT NOT NULL,
       allowed_models_json TEXT NOT NULL DEFAULT '[]',
       can_use_code INTEGER NOT NULL DEFAULT 0,
@@ -159,6 +161,7 @@ export function createDatabase(databasePath) {
 
   ensureColumn(db, "users", "can_use_code", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "users", "is_admin", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "users", "language", "TEXT NOT NULL DEFAULT 'en'");
   ensureColumn(db, "users", "failed_login_attempts", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "users", "locked_until", "TEXT");
   ensureColumn(db, "users", "last_login_at", "TEXT");
@@ -194,12 +197,14 @@ export function createDatabase(databasePath) {
     insertUser: db.prepare(`
       INSERT INTO users (
         id, username, password_hash, display_name, repo_url, repo_local_path,
+        language,
         repo_default_branch, chat_model, allowed_models_json, can_use_code,
         is_admin, failed_login_attempts, locked_until, last_login_at, last_login_ip,
         created_at, updated_at
       )
       VALUES (
         @id, @username, @password_hash, @display_name, @repo_url, @repo_local_path,
+        @language,
         @repo_default_branch, @chat_model, @allowed_models_json, @can_use_code,
         @is_admin, 0, NULL, NULL, NULL, @created_at, @updated_at
       )
@@ -212,10 +217,18 @@ export function createDatabase(databasePath) {
         repo_url = @repo_url,
         repo_local_path = @repo_local_path,
         repo_default_branch = @repo_default_branch,
+        language = COALESCE(@language, language),
         chat_model = @chat_model,
         allowed_models_json = @allowed_models_json,
         can_use_code = @can_use_code,
         is_admin = @is_admin,
+        updated_at = @updated_at
+      WHERE id = @id
+    `),
+    updateUserLanguage: db.prepare(`
+      UPDATE users
+      SET
+        language = @language,
         updated_at = @updated_at
       WHERE id = @id
     `),
@@ -446,6 +459,7 @@ export function createDatabase(databasePath) {
         display_name: input.displayName,
         repo_url: input.repoUrl,
         repo_local_path: input.repoLocalPath || "",
+        language: input.language || "en",
         repo_default_branch: input.repoDefaultBranch || "main",
         chat_model: input.chatModel,
         allowed_models_json: JSON.stringify(input.allowedModels || []),
@@ -465,6 +479,7 @@ export function createDatabase(databasePath) {
         display_name: input.displayName,
         repo_url: input.repoUrl,
         repo_local_path: input.repoLocalPath || "",
+        language: input.language ?? null,
         repo_default_branch: input.repoDefaultBranch || "main",
         chat_model: input.chatModel,
         allowed_models_json: JSON.stringify(input.allowedModels || []),
@@ -473,6 +488,15 @@ export function createDatabase(databasePath) {
         updated_at: nowIso(),
       });
       return this.getUserById(input.id);
+    },
+
+    updateUserLanguage(userId, language) {
+      statements.updateUserLanguage.run({
+        id: userId,
+        language: language || "en",
+        updated_at: nowIso(),
+      });
+      return this.getUserById(userId);
     },
 
     markLoginFailure(userId, { failedLoginAttempts, lockedUntil = null }) {

@@ -10,57 +10,69 @@
         const theme = stored === "dark" || stored === "light"
           ? stored
           : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        const storedLanguage = localStorage.getItem("relay.language.v1");
+        const language = storedLanguage === "zh-CN" || storedLanguage === "en"
+          ? storedLanguage
+          : ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh-CN" : "en");
         document.documentElement.dataset.theme = theme;
         document.documentElement.style.colorScheme = theme;
+        document.documentElement.lang = language;
       } catch {
         document.documentElement.dataset.theme = "light";
         document.documentElement.style.colorScheme = "light";
+        document.documentElement.lang = "en";
       }
     </script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div id="app-shell" class="app-shell booting">
-      <div class="theme-switch" aria-label="Theme">
-        <button type="button" class="theme-button" data-theme-mode="light" aria-pressed="false">Light</button>
-        <button type="button" class="theme-button" data-theme-mode="dark" aria-pressed="false">Dark</button>
+      <div class="top-controls">
+        <div id="language-switch" class="language-switch" aria-label="Language">
+          <button type="button" class="theme-button" data-language-mode="zh-CN" aria-pressed="false">中文</button>
+          <button type="button" class="theme-button" data-language-mode="en" aria-pressed="false">English</button>
+        </div>
+        <div id="theme-switch" class="theme-switch" aria-label="Theme">
+          <button type="button" class="theme-button" data-theme-mode="light" aria-pressed="false">Light</button>
+          <button type="button" class="theme-button" data-theme-mode="dark" aria-pressed="false">Dark</button>
+        </div>
       </div>
 
       <section id="boot-screen" class="boot-screen">
         <div class="boot-card">
-          <p class="eyebrow">Relay Station</p>
-          <strong>Loading</strong>
+          <p id="boot-eyebrow" class="eyebrow">Relay Station</p>
+          <strong id="boot-loading-text">Loading</strong>
         </div>
       </section>
 
       <section id="login-screen" class="login-screen">
         <div class="login-card">
           <div class="login-copy">
-            <p class="eyebrow">Relay Station</p>
-            <h1>Chat. Code. Control.</h1>
-            <p class="lede">Private multi-user AI relay.</p>
+            <p id="login-brand-eyebrow" class="eyebrow">Relay Station</p>
+            <h1 id="login-hero-title">Chat. Code. Control.</h1>
+            <p id="login-hero-lede" class="lede">Private multi-user AI relay.</p>
           </div>
 
           <div class="login-form-shell">
-            <p class="eyebrow">Access</p>
+            <p id="login-access-eyebrow" class="eyebrow">Access</p>
             <div class="login-panel-intro">
               <h2 id="login-panel-title">Enter</h2>
             </div>
             <div id="auth-mode-toggle" class="mode-toggle auth-mode-toggle">
-              <button type="button" class="mode-button active" data-auth-mode="login">Login</button>
-              <button type="button" class="mode-button" data-auth-mode="register">Register</button>
+              <button id="auth-login-button" type="button" class="mode-button active" data-auth-mode="login">Login</button>
+              <button id="auth-register-button" type="button" class="mode-button" data-auth-mode="register">Register</button>
             </div>
             <form id="login-form" class="stack">
               <label>
-                <span>Username</span>
+                <span id="login-username-label">Username</span>
                 <input type="text" name="username" autocomplete="username" required />
               </label>
               <label>
-                <span>Password</span>
+                <span id="login-password-label">Password</span>
                 <input type="password" name="password" autocomplete="current-password" required />
               </label>
               <label id="login-confirm-password-row" class="hidden">
-                <span>Confirm Password</span>
+                <span id="login-confirm-password-label">Confirm Password</span>
                 <input type="password" name="confirmPassword" autocomplete="new-password" />
               </label>
               <button id="login-submit-button" type="submit">Enter Station</button>
@@ -73,19 +85,19 @@
       <section id="app-screen" class="app-screen hidden">
         <aside class="sidebar">
           <div class="brand-block">
-            <p class="eyebrow">Relay Station</p>
+            <p id="sidebar-brand-eyebrow" class="eyebrow">Relay Station</p>
             <h2 id="user-name">User</h2>
           </div>
 
           <div id="app-mode-toggle" class="mode-toggle app-mode-toggle">
-            <button class="mode-button active" data-mode="chat">Chat Mode</button>
-            <button class="mode-button" data-mode="code">Code Mode</button>
+            <button id="chat-mode-button" class="mode-button active" data-mode="chat">Chat Mode</button>
+            <button id="code-mode-tab-button" class="mode-button" data-mode="code">Code Mode</button>
             <button id="admin-mode-button" class="mode-button" data-mode="admin">Control</button>
           </div>
 
           <div id="chat-list-panel" class="panel">
             <div class="panel-header">
-              <h3>Chats</h3>
+              <h3 id="chat-list-title">Chats</h3>
               <button id="new-chat-button" class="ghost-button">New</button>
             </div>
             <div id="conversation-list" class="list"></div>
@@ -93,7 +105,7 @@
 
           <div id="code-list-panel" class="panel">
             <div class="panel-header">
-              <h3>Jobs</h3>
+              <h3 id="job-list-title">Jobs</h3>
               <span id="queue-pill" class="queue-pill">idle</span>
             </div>
             <div id="job-list" class="list"></div>
@@ -115,11 +127,11 @@
                 </div>
                 <div class="chat-pickers">
                   <label class="model-picker">
-                    <span>Provider</span>
+                    <span id="chat-provider-label">Provider</span>
                     <select id="chat-provider-select"></select>
                   </label>
                   <label class="model-picker">
-                    <span>Model</span>
+                    <span id="chat-model-label">Model</span>
                     <select id="chat-model-select"></select>
                   </label>
                 </div>
@@ -132,8 +144,8 @@
                 <input id="chat-attachments-input" class="hidden" type="file" multiple />
                 <div id="chat-attachment-list" class="attachment-selection hidden"></div>
                 <div class="composer-actions">
-                  <label class="ghost-button attachment-trigger" for="chat-attachments-input">Add Files</label>
-                  <button type="submit">Send</button>
+                  <label id="chat-add-files-button" class="ghost-button attachment-trigger" for="chat-attachments-input">Add Files</label>
+                  <button id="chat-submit-button" type="submit">Send</button>
                 </div>
               </form>
             </div>
@@ -144,7 +156,7 @@
               <div class="panel hero-panel">
                 <div class="panel-header">
                   <div class="chat-header-title">
-                    <h3>Queue a code job</h3>
+                    <h3 id="code-form-title">Queue a code job</h3>
                   </div>
                 </div>
                 <form id="code-form" class="composer code-composer">
@@ -152,8 +164,8 @@
                   <input id="code-attachments-input" class="hidden" type="file" multiple />
                   <div id="code-attachment-list" class="attachment-selection hidden"></div>
                   <div class="composer-actions">
-                    <label class="ghost-button attachment-trigger" for="code-attachments-input">Add Files</label>
-                    <button type="submit">Queue Code Job</button>
+                    <label id="code-add-files-button" class="ghost-button attachment-trigger" for="code-attachments-input">Add Files</label>
+                    <button id="code-submit-button" type="submit">Queue Code Job</button>
                   </div>
                 </form>
               </div>
@@ -180,7 +192,7 @@
               <div class="panel hero-panel">
                 <div class="panel-header">
                   <div class="chat-header-title">
-                    <h3>AI Control</h3>
+                    <h3 id="admin-title">AI Control</h3>
                   </div>
                   <button id="admin-refresh-button" type="button" class="ghost-button compact-button">Refresh</button>
                 </div>
@@ -188,7 +200,7 @@
 
                 <div id="admin-users-section" class="admin-section hidden">
                   <div class="admin-section-header">
-                    <h4>User Management</h4>
+                    <h4 id="admin-users-title">User Management</h4>
                     <input id="admin-user-search-input" class="admin-search-input" type="search" placeholder="Search users" />
                   </div>
                   <div class="table-wrap">
@@ -209,38 +221,38 @@
 
                 <div id="admin-dispatch-settings-section" class="admin-section hidden">
                   <div class="admin-section-header">
-                    <h4>Dispatch Settings</h4>
+                    <h4 id="admin-dispatch-settings-title">Dispatch Settings</h4>
                     <button id="admin-routing-reset-button" type="button" class="ghost-button compact-button">Reset</button>
                   </div>
                   <form id="admin-dispatch-form" class="admin-form-grid">
                     <label>
-                      <span>Retry Cooldown (ms)</span>
+                      <span id="admin-retry-cooldown-label">Retry Cooldown (ms)</span>
                       <input id="admin-retry-cooldown-input" name="retryCooldownMs" type="number" min="0" step="1000" required />
                     </label>
                     <label>
-                      <span>Quota Cooldown (ms)</span>
+                      <span id="admin-quota-cooldown-label">Quota Cooldown (ms)</span>
                       <input id="admin-quota-cooldown-input" name="quotaCooldownMs" type="number" min="0" step="1000" required />
                     </label>
                     <label>
-                      <span>Breaker Threshold</span>
+                      <span id="admin-breaker-threshold-label">Breaker Threshold</span>
                       <input id="admin-breaker-threshold-input" name="circuitBreakerThreshold" type="number" min="1" step="1" required />
                     </label>
                     <label>
-                      <span>Breaker Cooldown (ms)</span>
+                      <span id="admin-breaker-cooldown-label">Breaker Cooldown (ms)</span>
                       <input id="admin-breaker-cooldown-input" name="circuitBreakerMs" type="number" min="0" step="1000" required />
                     </label>
                     <label>
-                      <span>History Limit</span>
+                      <span id="admin-history-limit-label">History Limit</span>
                       <input id="admin-history-limit-input" name="dispatchHistoryLimit" type="number" min="50" step="10" required />
                     </label>
                     <div class="admin-form-actions">
-                      <button type="submit">Save Dispatch</button>
+                      <button id="admin-save-dispatch-button" type="submit">Save Dispatch</button>
                     </div>
                   </form>
                 </div>
 
                 <div class="admin-section">
-                  <h4>API Usage</h4>
+                  <h4 id="admin-api-usage-title">API Usage</h4>
                   <div class="table-wrap">
                     <table class="data-table">
                       <thead>
@@ -260,7 +272,7 @@
                 </div>
 
                 <div id="admin-api-keys-section" class="admin-section">
-                  <h4>API Keys</h4>
+                  <h4 id="admin-api-keys-title">API Keys</h4>
                   <div class="table-wrap">
                     <table class="data-table">
                       <thead>
@@ -283,9 +295,9 @@
 
                 <div id="admin-auto-routing-section" class="admin-section">
                   <div class="admin-section-header">
-                    <h4>Auto Routing</h4>
+                    <h4 id="admin-auto-routing-title">Auto Routing</h4>
                   </div>
-                  <p class="section-note">Top to bottom wins inside each route type.</p>
+                  <p id="admin-auto-routing-note" class="section-note">Top to bottom wins inside each route type.</p>
                   <div class="table-wrap">
                     <table class="data-table">
                       <thead>
@@ -308,12 +320,12 @@
               <div class="panel hero-panel">
                 <div class="panel-header">
                   <div class="chat-header-title">
-                    <h3>Dispatch Timeline</h3>
+                    <h3 id="admin-dispatch-timeline-title">Dispatch Timeline</h3>
                   </div>
                 </div>
 
                 <div class="admin-section">
-                  <h4>Dispatch Events</h4>
+                  <h4 id="admin-dispatch-events-title">Dispatch Events</h4>
                   <div class="table-wrap">
                     <table class="data-table">
                       <thead>
@@ -337,15 +349,15 @@
                   <h4 id="admin-user-repo-title">Code Repository</h4>
                   <form id="admin-user-repo-form" class="admin-form-grid">
                     <label>
-                      <span>Remote URL</span>
+                      <span id="admin-user-repo-url-label">Remote URL</span>
                       <input id="admin-user-repo-url-input" type="text" placeholder="https://github.com/org/repo.git" />
                     </label>
                     <label>
-                      <span>Local Path</span>
+                      <span id="admin-user-repo-path-label">Local Path</span>
                       <input id="admin-user-repo-path-input" type="text" placeholder="/home/ubuntu/repos/example" />
                     </label>
                     <label>
-                      <span>Default Branch</span>
+                      <span id="admin-user-repo-branch-label">Default Branch</span>
                       <input id="admin-user-repo-branch-input" type="text" placeholder="main" />
                     </label>
                     <div class="admin-form-actions">
@@ -376,7 +388,7 @@
                 </div>
 
                 <div id="admin-auth-section" class="admin-section hidden">
-                  <h4>Authentication Audit</h4>
+                  <h4 id="admin-auth-title">Authentication Audit</h4>
                   <div class="table-wrap">
                     <table class="data-table">
                       <thead>

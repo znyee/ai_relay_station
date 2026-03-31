@@ -235,6 +235,17 @@ function normalizeDisplayName(value, fallback = "") {
   return text || fallback;
 }
 
+function normalizeLanguage(value, fallback = "en") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "zh" || normalized === "zh-cn" || normalized === "zh_hans") {
+    return "zh-CN";
+  }
+  if (normalized === "en" || normalized === "en-us" || normalized === "en-gb") {
+    return "en";
+  }
+  return fallback;
+}
+
 function normalizeRepoUrl(value) {
   return String(value || "").trim().slice(0, 2048);
 }
@@ -479,6 +490,7 @@ function serializeUser(user) {
     id: user.id,
     username: user.username,
     displayName: user.display_name,
+    language: normalizeLanguage(user.language, "en"),
     canUseCode: true,
     isAdmin: Boolean(user.isAdmin),
     failedLoginAttempts: Number(user.failedLoginAttempts || 0),
@@ -653,6 +665,7 @@ app.post("/api/auth/register", async (req, res) => {
   const username = normalizeUsername(req.body?.username);
   const password = String(req.body?.password || "");
   const displayName = username;
+  const language = normalizeLanguage(req.body?.language, "en");
   if (rejectRateLimitedAuthRequest(req, res, "register", username)) {
     return;
   }
@@ -676,6 +689,7 @@ app.post("/api/auth/register", async (req, res) => {
     username,
     passwordHash: await hashPassword(password),
     displayName,
+    language,
     repoUrl: "",
     repoLocalPath: "",
     repoDefaultBranch: "main",
@@ -819,6 +833,15 @@ app.get("/api/me", requireAuth, async (req, res) => {
       admin: Boolean(req.user.isAdmin),
     },
     queue: jobQueue.stats(),
+  });
+});
+
+app.patch("/api/me/preferences", requireAuth, async (req, res) => {
+  const language = normalizeLanguage(req.body?.language, normalizeLanguage(req.user.language, "en"));
+  const updatedUser = db.updateUserLanguage(req.user.id, language);
+  req.user = updatedUser;
+  res.json({
+    user: serializeUser(updatedUser),
   });
 });
 
@@ -1434,6 +1457,7 @@ async function ensureRootAdminUser() {
     const updateInput = {
       id: existing.id,
       displayName: existing.display_name,
+      language: existing.language,
       repoUrl: existing.repo_url,
       repoLocalPath: existing.repo_local_path,
       repoDefaultBranch: existing.repo_default_branch,
@@ -1490,6 +1514,7 @@ async function ensureRootAdminUser() {
     username: config.rootAdminUsername,
     passwordHash: await hashPassword(rootPassword),
     displayName: config.rootAdminDisplayName,
+    language: "en",
     repoUrl: config.rootAdminRepoUrl,
     repoLocalPath: config.rootAdminRepoPath,
     repoDefaultBranch: config.rootAdminRepoBranch,
@@ -1522,6 +1547,7 @@ async function maybeBootstrapDefaultUser() {
     username: bootstrapUsername,
     passwordHash: await hashPassword(bootstrapPassword),
     displayName: process.env.BOOTSTRAP_DISPLAY_NAME || "Owner",
+    language: normalizeLanguage(process.env.BOOTSTRAP_LANGUAGE, "en"),
     repoUrl: process.env.BOOTSTRAP_REPO_URL || "",
     repoLocalPath: process.env.BOOTSTRAP_REPO_PATH || "",
     repoDefaultBranch: process.env.BOOTSTRAP_REPO_BRANCH || "main",

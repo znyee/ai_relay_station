@@ -115,6 +115,7 @@ test("registration accepts simple passwords and exposes the control overview to 
     body: JSON.stringify({
       username: "alice",
       password: "123456",
+      language: "zh-CN",
     }),
   });
   assert.equal(registerResponse.status, 201);
@@ -122,6 +123,7 @@ test("registration accepts simple passwords and exposes the control overview to 
   const cookie = sessionCookie(registerResponse);
   assert.equal(registerPayload.user.username, "alice");
   assert.equal(registerPayload.user.displayName, "alice");
+  assert.equal(registerPayload.user.language, "zh-CN");
   assert.equal(registerPayload.user.canUseCode, true);
   assert.ok(cookie.includes("relay_station_session="));
 
@@ -132,6 +134,7 @@ test("registration accepts simple passwords and exposes the control overview to 
   });
   assert.equal(meResponse.status, 200);
   const mePayload = await meResponse.json();
+  assert.equal(mePayload.user.language, "zh-CN");
   assert.equal(mePayload.capabilities.code, true);
   assert.equal(mePayload.capabilities.admin, false);
 
@@ -169,6 +172,74 @@ test("registration accepts simple passwords and exposes the control overview to 
     }),
   });
   assert.equal(updateRoutingResponse.status, 403);
+});
+
+test("user language preference is persisted and restored on next login", async (t) => {
+  const server = await startServer();
+  t.after(async () => {
+    await stopServer(server.child);
+  });
+
+  const registerResponse = await fetch(`${server.baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      username: "locale-user",
+      password: "123456",
+      language: "en",
+    }),
+  });
+  assert.equal(registerResponse.status, 201);
+  const registerPayload = await registerResponse.json();
+  assert.equal(registerPayload.user.language, "en");
+  const registerCookie = sessionCookie(registerResponse);
+
+  const updateResponse = await fetch(`${server.baseUrl}/api/me/preferences`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      cookie: registerCookie,
+    },
+    body: JSON.stringify({
+      language: "zh-CN",
+    }),
+  });
+  assert.equal(updateResponse.status, 200);
+  const updatePayload = await updateResponse.json();
+  assert.equal(updatePayload.user.language, "zh-CN");
+
+  const logoutResponse = await fetch(`${server.baseUrl}/api/auth/logout`, {
+    method: "POST",
+    headers: {
+      cookie: registerCookie,
+    },
+  });
+  assert.equal(logoutResponse.status, 200);
+
+  const loginResponse = await fetch(`${server.baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      username: "locale-user",
+      password: "123456",
+    }),
+  });
+  assert.equal(loginResponse.status, 200);
+  const loginPayload = await loginResponse.json();
+  assert.equal(loginPayload.user.language, "zh-CN");
+
+  const meResponse = await fetch(`${server.baseUrl}/api/me`, {
+    headers: {
+      cookie: sessionCookie(loginResponse),
+    },
+  });
+  assert.equal(meResponse.status, 200);
+  const mePayload = await meResponse.json();
+  assert.equal(mePayload.user.language, "zh-CN");
 });
 
 test("registration is rate limited per client ip", async (t) => {

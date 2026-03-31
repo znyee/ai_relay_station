@@ -7,11 +7,13 @@ const state = {
   adminOverview: null,
   authMode: "login",
   mode: "chat",
+  language: document.documentElement.lang || "en",
   themeMode: document.documentElement.dataset.theme || "light",
   conversations: [],
   selectedConversationId: null,
   messages: [],
   jobs: [],
+  queueStats: null,
   selectedJobId: null,
   selectedJob: null,
   selectedJobLogText: "",
@@ -28,6 +30,7 @@ const state = {
 
 const CHAT_PROVIDER_STORAGE_KEY = "relay.chatProviderId.v2";
 const CHAT_MODEL_STORAGE_KEY_PREFIX = "relay.chatModel.v2.";
+const LANGUAGE_STORAGE_KEY = "relay.language.v1";
 const THEME_STORAGE_KEY = "relay.theme.v1";
 const JOB_POLL_INTERVAL_MS = 4000;
 const IDLE_JOB_POLL_INTERVAL_MS = 15000;
@@ -41,6 +44,7 @@ const els = {
   bootScreen: document.getElementById("boot-screen"),
   loginScreen: document.getElementById("login-screen"),
   appScreen: document.getElementById("app-screen"),
+  languageButtons: Array.from(document.querySelectorAll("[data-language-mode]")),
   themeButtons: Array.from(document.querySelectorAll("[data-theme-mode]")),
   authModeButtons: Array.from(document.querySelectorAll("#auth-mode-toggle [data-auth-mode]")),
   loginForm: document.getElementById("login-form"),
@@ -64,14 +68,14 @@ const els = {
   chatModelSelect: document.getElementById("chat-model-select"),
   chatAttachmentsInput: document.getElementById("chat-attachments-input"),
   chatAttachmentList: document.getElementById("chat-attachment-list"),
-  chatSubmitButton: document.querySelector("#chat-form button[type='submit']"),
+  chatSubmitButton: document.getElementById("chat-submit-button"),
   codeModeButton: document.querySelector('#app-mode-toggle .mode-button[data-mode="code"]'),
   adminModeButton: document.getElementById("admin-mode-button"),
   codeForm: document.getElementById("code-form"),
   codeInput: document.getElementById("code-input"),
   codeAttachmentsInput: document.getElementById("code-attachments-input"),
   codeAttachmentList: document.getElementById("code-attachment-list"),
-  codeSubmitButton: document.querySelector("#code-form button[type='submit']"),
+  codeSubmitButton: document.getElementById("code-submit-button"),
   jobList: document.getElementById("job-list"),
   jobDetail: document.getElementById("job-detail"),
   jobTitle: document.getElementById("job-title"),
@@ -136,6 +140,487 @@ const els = {
   modalConfirmButton: document.getElementById("modal-confirm-button"),
 };
 
+const TRANSLATIONS = {
+  en: {
+    "brand.name": "Relay Station",
+    "brand.user": "User",
+    "controls.language": "Language",
+    "controls.theme": "Theme",
+    "controls.languageZh": "中文",
+    "controls.languageEn": "English",
+    "controls.themeLight": "Light",
+    "controls.themeDark": "Dark",
+    "boot.loading": "Loading",
+    "login.heroTitle": "Chat. Code. Control.",
+    "login.heroLede": "Private multi-user AI relay.",
+    "auth.access": "Access",
+    "auth.enter": "Enter",
+    "auth.createAccount": "Create Account",
+    "auth.login": "Login",
+    "auth.register": "Register",
+    "auth.username": "Username",
+    "auth.password": "Password",
+    "auth.confirmPassword": "Confirm Password",
+    "auth.enterStation": "Enter Station",
+    "auth.passwordsMismatch": "Passwords do not match.",
+    "sidebar.chatMode": "Chat Mode",
+    "sidebar.codeMode": "Code Mode",
+    "sidebar.control": "Control",
+    "sidebar.chats": "Chats",
+    "sidebar.jobs": "Jobs",
+    "sidebar.new": "New",
+    "sidebar.logout": "Log out",
+    "common.notice": "Notice",
+    "common.confirm": "Confirm",
+    "common.input": "Input",
+    "common.error": "Error",
+    "common.close": "Close",
+    "common.continue": "Continue",
+    "common.cancel": "Cancel",
+    "common.save": "Save",
+    "common.value": "Value",
+    "common.remove": "Remove",
+    "common.copy": "Copy",
+    "common.copied": "Copied",
+    "common.copyFailed": "Failed",
+    "common.clickToDownload": "Click to download",
+    "common.preparingDownload": "Preparing download",
+    "common.active": "Active",
+    "common.adminOnly": "Admin only",
+    "common.on": "on",
+    "common.off": "off",
+    "common.current": "Current",
+    "common.never": "Never",
+    "common.unknownIp": "Unknown IP",
+    "common.unknownAgent": "Unknown agent",
+    "chat.selectConversation": "Select or create a conversation",
+    "chat.start": "Start a chat.",
+    "chat.provider": "Provider",
+    "chat.model": "Model",
+    "chat.askPlaceholder": "Ask anything or attach files for context...",
+    "chat.addFiles": "Add Files",
+    "chat.send": "Send",
+    "chat.streaming": "Streaming…",
+    "chat.noProviderConfigured": "No provider configured",
+    "chat.pin": "Pin",
+    "chat.unpin": "Unpin",
+    "chat.delete": "Delete",
+    "chat.thinking": "Thinking…",
+    "chat.streamingMeta": "Streaming",
+    "chat.failedMeta": "Failed",
+    "chat.noChats": "No chats.",
+    "chat.pinned": "Pinned",
+    "chat.sentAttachments": "Sent {count} attachment{suffix}.",
+    "chat.newConversationTitle": "New chat",
+    "chat.deleteTitle": "Delete chat",
+    "chat.deletePrompt": "Delete conversation \"{title}\"?",
+    "chat.messageFailed": "Message failed",
+    "chat.streamingUnsupported": "Streaming is not supported by this browser.",
+    "code.formTitle": "Queue a code job",
+    "code.placeholder": "Describe the task, script, automation, or implementation work...",
+    "code.queueButton": "Queue Code Job",
+    "code.noJobSelected": "No job selected",
+    "code.selectJob": "Select a job.",
+    "code.noJobs": "No jobs.",
+    "code.pin": "Pin",
+    "code.unpin": "Unpin",
+    "code.delete": "Delete",
+    "code.untitledJob": "Untitled job",
+    "code.attachmentsTitle": "Attachments",
+    "code.status": "Status",
+    "code.inputFiles": "Input Files",
+    "code.outputFiles": "Output Files",
+    "code.noOutputYet": "No output yet.",
+    "code.queue": "Queue",
+    "code.liveOutput": "Live Output",
+    "code.waitingForWorker": "Waiting for a worker slot.",
+    "code.waitingForLiveOutput": "Waiting for live output…",
+    "code.queued": "Queued…",
+    "code.changedFiles": "Changed Files",
+    "code.diff": "Diff",
+    "code.queueIdle": "idle",
+    "code.queueRunning": "{running}/{concurrency} running",
+    "code.runningDeleteBlocked": "Running jobs cannot be deleted.",
+    "code.deleteTitle": "Delete job",
+    "code.deletePrompt": "Delete code job \"{title}\"?",
+    "code.queueFailed": "Queue failed",
+    "admin.title": "AI Control",
+    "admin.refresh": "Refresh",
+    "admin.users": "User Management",
+    "admin.searchUsers": "Search users",
+    "admin.dispatchSettings": "Dispatch Settings",
+    "admin.reset": "Reset",
+    "admin.retryCooldown": "Retry Cooldown (ms)",
+    "admin.quotaCooldown": "Quota Cooldown (ms)",
+    "admin.breakerThreshold": "Breaker Threshold",
+    "admin.breakerCooldown": "Breaker Cooldown (ms)",
+    "admin.historyLimit": "History Limit",
+    "admin.saveDispatch": "Save Dispatch",
+    "admin.apiUsage": "API Usage",
+    "admin.apiKeys": "API Keys",
+    "admin.autoRouting": "Auto Routing",
+    "admin.autoRoutingNote": "Top to bottom wins inside each route type.",
+    "admin.dispatchTimeline": "Dispatch Timeline",
+    "admin.dispatchEvents": "Dispatch Events",
+    "admin.codeRepository": "Code Repository",
+    "admin.remoteUrl": "Remote URL",
+    "admin.localPath": "Local Path",
+    "admin.defaultBranch": "Default Branch",
+    "admin.saveRepo": "Save Repo",
+    "admin.userConversations": "User Conversations",
+    "admin.userJobs": "User Jobs",
+    "admin.userSessions": "User Sessions",
+    "admin.authenticationAudit": "Authentication Audit",
+    "admin.noApiUsageLoaded": "No API usage data loaded.",
+    "admin.noAdminDataLoaded": "No admin data loaded.",
+    "admin.noAutoRoutingLoaded": "No auto routing data loaded.",
+    "admin.noDispatchYet": "No dispatch events yet.",
+    "admin.noUsersLoaded": "No users loaded.",
+    "admin.noAuthAuditYet": "No authentication audit events yet.",
+    "admin.configuredProviders": "Configured Providers",
+    "admin.configuredApiKeys": "Configured API Keys",
+    "admin.apiSuccesses": "API Successes",
+    "admin.apiFailures": "API Failures",
+    "admin.recentDispatches": "Recent Dispatches",
+    "admin.activeUsers": "Active Users",
+    "admin.cooldownKeys": "Cooldown Keys",
+    "admin.usersMetric": "Users",
+    "admin.codeQueue": "Code Queue",
+    "admin.noApiUsageYet": "No API usage recorded yet.",
+    "admin.noApiKeysConfigured": "No API keys configured.",
+    "admin.autoModeNotConfigured": "Auto mode is not configured.",
+    "admin.noDispatchEventsRecorded": "No dispatch events recorded yet.",
+    "admin.selectUser": "Select a user.",
+    "admin.noChatHistory": "No chat history.",
+    "admin.noMessagesRecorded": "No messages recorded.",
+    "admin.noJobs": "No jobs.",
+    "admin.noActiveSessions": "No active sessions.",
+    "admin.noMatchingUsers": "No matching users.",
+    "admin.noUsersFound": "No users found.",
+    "admin.open": "Open",
+    "admin.unlock": "Unlock",
+    "admin.signOut": "Sign Out",
+    "admin.password": "Password",
+    "admin.makeAdmin": "Make Admin",
+    "admin.revokeAdmin": "Revoke Admin",
+    "admin.delete": "Delete",
+    "admin.member": "member",
+    "admin.roleAdmin": "admin",
+    "admin.locked": "locked",
+    "admin.activitySummary": "{chats} chats · {jobs} jobs · {sessions} sessions",
+    "admin.signOutTitle": "Sign out sessions",
+    "admin.signOutPrompt": "Sign out all active sessions for \"{username}\"?",
+    "admin.changePasswordTitle": "Change password",
+    "admin.changePasswordPrompt": "Set a new password for {username}:",
+    "admin.newPassword": "New password",
+    "admin.savePassword": "Save Password",
+    "admin.deleteUserTitle": "Delete user",
+    "admin.deleteUserPrompt": "Delete user \"{username}\" and all of their data?",
+    "admin.resetRoutingTitle": "Reset routing",
+    "admin.resetRoutingPrompt": "Reset dispatch settings and auto routing to defaults?",
+    "admin.refreshFailed": "Refresh failed",
+    "admin.saveFailed": "Save failed",
+    "admin.resetFailed": "Reset failed",
+    "admin.updateFailed": "Update failed",
+    "admin.userUpdateFailed": "User update failed",
+    "admin.repositoryFor": "Code Repository · {displayName}",
+    "admin.conversationsFor": "User Conversations · {displayName} ({username})",
+    "admin.jobsFor": "User Jobs · {displayName}",
+    "admin.sessionsFor": "User Sessions · {displayName}",
+    "admin.messageCount": "{count} msgs",
+    "admin.attachments": "Attachments: {files}",
+    "admin.noBranch": "no branch",
+    "admin.inProgress": "in progress",
+    "admin.noOutput": "No output.",
+    "admin.selectUserButton": "Select a user",
+    "table.user": "User",
+    "table.role": "Role",
+    "table.activity": "Activity",
+    "table.lastLogin": "Last Login",
+    "table.actions": "Actions",
+    "table.provider": "Provider",
+    "table.keys": "Keys",
+    "table.success": "Success",
+    "table.failure": "Failure",
+    "table.cooldown": "Cooldown",
+    "table.inFlight": "In Flight",
+    "table.lastUsed": "Last Used",
+    "table.key": "Key",
+    "table.status": "Status",
+    "table.priority": "Priority",
+    "table.weight": "Weight",
+    "table.lastError": "Last Error",
+    "table.type": "Type",
+    "table.route": "Route",
+    "table.state": "State",
+    "table.order": "Order",
+    "table.time": "Time",
+    "table.providerKey": "Provider / Key",
+    "table.model": "Model",
+    "table.userLabel": "User",
+    "table.latency": "Latency",
+    "table.error": "Error",
+    "table.ip": "IP",
+    "table.reason": "Reason",
+    "table.event": "Event",
+    "actions.up": "Up",
+    "actions.down": "Down",
+    "status.pending": "pending",
+    "status.running": "running",
+    "status.completed": "completed",
+    "status.failed": "failed",
+    "status.success": "success",
+    "status.healthy": "healthy",
+    "status.degraded": "degraded",
+    "status.cooldown": "cooldown",
+    "status.disabled": "disabled",
+    "status.route-failed": "route-failed",
+    "status.route-terminal": "route-terminal",
+    "status.login_failed": "login_failed",
+    "status.login_locked": "login_locked",
+    "status.login_blocked": "login_blocked",
+  },
+  "zh-CN": {
+    "brand.name": "Relay Station",
+    "brand.user": "用户",
+    "controls.language": "语言",
+    "controls.theme": "主题",
+    "controls.languageZh": "中文",
+    "controls.languageEn": "English",
+    "controls.themeLight": "亮色",
+    "controls.themeDark": "暗色",
+    "boot.loading": "加载中",
+    "login.heroTitle": "对话 · 代码 · 控制",
+    "login.heroLede": "面向多用户的私有 AI Relay。",
+    "auth.access": "访问",
+    "auth.enter": "登录",
+    "auth.createAccount": "创建账户",
+    "auth.login": "登录",
+    "auth.register": "注册",
+    "auth.username": "用户名",
+    "auth.password": "密码",
+    "auth.confirmPassword": "确认密码",
+    "auth.enterStation": "进入系统",
+    "auth.passwordsMismatch": "两次输入的密码不一致。",
+    "sidebar.chatMode": "对话模式",
+    "sidebar.codeMode": "代码模式",
+    "sidebar.control": "控制台",
+    "sidebar.chats": "对话",
+    "sidebar.jobs": "任务",
+    "sidebar.new": "新建",
+    "sidebar.logout": "退出登录",
+    "common.notice": "提示",
+    "common.confirm": "确认",
+    "common.input": "输入",
+    "common.error": "错误",
+    "common.close": "关闭",
+    "common.continue": "继续",
+    "common.cancel": "取消",
+    "common.save": "保存",
+    "common.value": "值",
+    "common.remove": "移除",
+    "common.copy": "复制",
+    "common.copied": "已复制",
+    "common.copyFailed": "失败",
+    "common.clickToDownload": "点击下载",
+    "common.preparingDownload": "准备下载中",
+    "common.active": "正常",
+    "common.adminOnly": "仅管理员",
+    "common.on": "开启",
+    "common.off": "关闭",
+    "common.current": "当前",
+    "common.never": "从未",
+    "common.unknownIp": "未知 IP",
+    "common.unknownAgent": "未知设备",
+    "chat.selectConversation": "选择或新建一个对话",
+    "chat.start": "开始一段对话。",
+    "chat.provider": "提供商",
+    "chat.model": "模型",
+    "chat.askPlaceholder": "输入问题，或附加文件作为上下文...",
+    "chat.addFiles": "添加文件",
+    "chat.send": "发送",
+    "chat.streaming": "生成中…",
+    "chat.noProviderConfigured": "未配置提供商",
+    "chat.pin": "置顶",
+    "chat.unpin": "取消置顶",
+    "chat.delete": "删除",
+    "chat.thinking": "思考中…",
+    "chat.streamingMeta": "生成中",
+    "chat.failedMeta": "失败",
+    "chat.noChats": "暂无对话。",
+    "chat.pinned": "已置顶",
+    "chat.sentAttachments": "已发送 {count} 个附件。",
+    "chat.newConversationTitle": "新对话",
+    "chat.deleteTitle": "删除对话",
+    "chat.deletePrompt": "确定删除对话“{title}”吗？",
+    "chat.messageFailed": "消息发送失败",
+    "chat.streamingUnsupported": "当前浏览器不支持流式响应。",
+    "code.formTitle": "创建代码任务",
+    "code.placeholder": "描述任务、脚本、自动化流程或实现需求...",
+    "code.queueButton": "加入代码队列",
+    "code.noJobSelected": "未选择任务",
+    "code.selectJob": "选择一个任务。",
+    "code.noJobs": "暂无任务。",
+    "code.pin": "置顶",
+    "code.unpin": "取消置顶",
+    "code.delete": "删除",
+    "code.untitledJob": "未命名任务",
+    "code.attachmentsTitle": "附件",
+    "code.status": "状态",
+    "code.inputFiles": "输入文件",
+    "code.outputFiles": "输出文件",
+    "code.noOutputYet": "暂无输出。",
+    "code.queue": "排队情况",
+    "code.liveOutput": "实时输出",
+    "code.waitingForWorker": "等待可用执行槽位。",
+    "code.waitingForLiveOutput": "等待实时输出…",
+    "code.queued": "排队中…",
+    "code.changedFiles": "变更文件",
+    "code.diff": "差异",
+    "code.queueIdle": "空闲",
+    "code.queueRunning": "{running}/{concurrency} 运行中",
+    "code.runningDeleteBlocked": "运行中的任务不能删除。",
+    "code.deleteTitle": "删除任务",
+    "code.deletePrompt": "确定删除代码任务“{title}”吗？",
+    "code.queueFailed": "入队失败",
+    "admin.title": "AI 控制台",
+    "admin.refresh": "刷新",
+    "admin.users": "用户管理",
+    "admin.searchUsers": "搜索用户",
+    "admin.dispatchSettings": "调度设置",
+    "admin.reset": "重置",
+    "admin.retryCooldown": "重试冷却（毫秒）",
+    "admin.quotaCooldown": "额度冷却（毫秒）",
+    "admin.breakerThreshold": "熔断阈值",
+    "admin.breakerCooldown": "熔断冷却（毫秒）",
+    "admin.historyLimit": "历史条数",
+    "admin.saveDispatch": "保存调度设置",
+    "admin.apiUsage": "API 使用情况",
+    "admin.apiKeys": "API Keys",
+    "admin.autoRouting": "自动路由",
+    "admin.autoRoutingNote": "同一类型路由按从上到下优先。",
+    "admin.dispatchTimeline": "调度时间线",
+    "admin.dispatchEvents": "调度事件",
+    "admin.codeRepository": "代码仓库",
+    "admin.remoteUrl": "远端地址",
+    "admin.localPath": "本地路径",
+    "admin.defaultBranch": "默认分支",
+    "admin.saveRepo": "保存仓库配置",
+    "admin.userConversations": "用户对话",
+    "admin.userJobs": "用户任务",
+    "admin.userSessions": "用户会话",
+    "admin.authenticationAudit": "认证审计",
+    "admin.noApiUsageLoaded": "尚未加载 API 使用数据。",
+    "admin.noAdminDataLoaded": "尚未加载管理员数据。",
+    "admin.noAutoRoutingLoaded": "尚未加载自动路由数据。",
+    "admin.noDispatchYet": "暂无调度事件。",
+    "admin.noUsersLoaded": "尚未加载用户。",
+    "admin.noAuthAuditYet": "暂无认证审计记录。",
+    "admin.configuredProviders": "已配置提供商",
+    "admin.configuredApiKeys": "已配置 API Key",
+    "admin.apiSuccesses": "API 成功次数",
+    "admin.apiFailures": "API 失败次数",
+    "admin.recentDispatches": "最近调度次数",
+    "admin.activeUsers": "活跃用户",
+    "admin.cooldownKeys": "冷却中的 Key",
+    "admin.usersMetric": "用户数",
+    "admin.codeQueue": "代码队列",
+    "admin.noApiUsageYet": "暂无 API 使用记录。",
+    "admin.noApiKeysConfigured": "未配置 API Key。",
+    "admin.autoModeNotConfigured": "未配置自动模式。",
+    "admin.noDispatchEventsRecorded": "暂无调度事件记录。",
+    "admin.selectUser": "请选择一个用户。",
+    "admin.noChatHistory": "暂无对话记录。",
+    "admin.noMessagesRecorded": "暂无消息记录。",
+    "admin.noJobs": "暂无任务。",
+    "admin.noActiveSessions": "暂无活跃会话。",
+    "admin.noMatchingUsers": "没有匹配的用户。",
+    "admin.noUsersFound": "没有用户。",
+    "admin.open": "查看",
+    "admin.unlock": "解锁",
+    "admin.signOut": "强制退出",
+    "admin.password": "改密码",
+    "admin.makeAdmin": "设为管理员",
+    "admin.revokeAdmin": "取消管理员",
+    "admin.delete": "删除",
+    "admin.member": "成员",
+    "admin.roleAdmin": "管理员",
+    "admin.locked": "已锁定",
+    "admin.activitySummary": "{chats} 个对话 · {jobs} 个任务 · {sessions} 个会话",
+    "admin.signOutTitle": "强制退出会话",
+    "admin.signOutPrompt": "确定让“{username}”的所有活跃会话退出吗？",
+    "admin.changePasswordTitle": "修改密码",
+    "admin.changePasswordPrompt": "为 {username} 设置新密码：",
+    "admin.newPassword": "新密码",
+    "admin.savePassword": "保存密码",
+    "admin.deleteUserTitle": "删除用户",
+    "admin.deleteUserPrompt": "确定删除用户“{username}”及其全部数据吗？",
+    "admin.resetRoutingTitle": "重置路由",
+    "admin.resetRoutingPrompt": "确定将调度设置和自动路由恢复为默认值吗？",
+    "admin.refreshFailed": "刷新失败",
+    "admin.saveFailed": "保存失败",
+    "admin.resetFailed": "重置失败",
+    "admin.updateFailed": "更新失败",
+    "admin.userUpdateFailed": "用户更新失败",
+    "admin.repositoryFor": "代码仓库 · {displayName}",
+    "admin.conversationsFor": "用户对话 · {displayName}（{username}）",
+    "admin.jobsFor": "用户任务 · {displayName}",
+    "admin.sessionsFor": "用户会话 · {displayName}",
+    "admin.messageCount": "{count} 条消息",
+    "admin.attachments": "附件：{files}",
+    "admin.noBranch": "无分支",
+    "admin.inProgress": "进行中",
+    "admin.noOutput": "暂无输出。",
+    "admin.selectUserButton": "请选择用户",
+    "table.user": "用户",
+    "table.role": "角色",
+    "table.activity": "活跃度",
+    "table.lastLogin": "最后登录",
+    "table.actions": "操作",
+    "table.provider": "提供商",
+    "table.keys": "Key 数",
+    "table.success": "成功",
+    "table.failure": "失败",
+    "table.cooldown": "冷却",
+    "table.inFlight": "进行中",
+    "table.lastUsed": "最近使用",
+    "table.key": "Key",
+    "table.status": "状态",
+    "table.priority": "优先级",
+    "table.weight": "权重",
+    "table.lastError": "最后错误",
+    "table.type": "类型",
+    "table.route": "路由",
+    "table.state": "状态",
+    "table.order": "顺序",
+    "table.time": "时间",
+    "table.providerKey": "提供商 / Key",
+    "table.model": "模型",
+    "table.userLabel": "用户",
+    "table.latency": "耗时",
+    "table.error": "错误",
+    "table.ip": "IP",
+    "table.reason": "原因",
+    "table.event": "事件",
+    "actions.up": "上移",
+    "actions.down": "下移",
+    "status.pending": "排队中",
+    "status.running": "运行中",
+    "status.completed": "已完成",
+    "status.failed": "失败",
+    "status.success": "成功",
+    "status.healthy": "健康",
+    "status.degraded": "降级",
+    "status.cooldown": "冷却中",
+    "status.disabled": "已停用",
+    "status.route-failed": "路由失败",
+    "status.route-terminal": "路由终止",
+    "status.login_failed": "登录失败",
+    "status.login_locked": "登录锁定",
+    "status.login_blocked": "登录阻止",
+  },
+};
+
 let jobsRefreshInFlight = false;
 let adminOverviewRefreshPromise = null;
 let messageRenderFrame = 0;
@@ -148,6 +633,229 @@ const modalState = {
   options: null,
   previouslyFocused: null,
 };
+
+function normalizeLanguage(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "zh" || normalized === "zh-cn" || normalized === "zh_hans") {
+    return "zh-CN";
+  }
+  return "en";
+}
+
+function translationTemplate(key, fallback = key) {
+  return TRANSLATIONS[normalizeLanguage(state.language)]?.[key] ?? TRANSLATIONS.en[key] ?? fallback;
+}
+
+function t(key, values = {}, fallback = key) {
+  return translationTemplate(key, fallback).replace(/\{(\w+)\}/g, (_match, token) => String(values[token] ?? ""));
+}
+
+function setText(id, key, values = {}, fallback = key) {
+  const element = document.getElementById(id);
+  if (element) {
+    element.textContent = t(key, values, fallback);
+  }
+}
+
+function setPlaceholder(id, key, values = {}, fallback = key) {
+  const element = document.getElementById(id);
+  if (element) {
+    element.setAttribute("placeholder", t(key, values, fallback));
+  }
+}
+
+function translateStatus(status) {
+  const value = String(status || "").trim();
+  if (!value) {
+    return "";
+  }
+  return t(`status.${value}`, {}, value);
+}
+
+function rerenderLocalizedViews() {
+  applyStaticTranslations();
+  renderAuthMode();
+  renderIdentity();
+  renderPendingAttachmentList("chat");
+  renderPendingAttachmentList("code");
+  renderConversations();
+  renderMessages();
+  renderJobs();
+  renderJobDetail();
+  renderAdminOverview();
+  renderQueuePill();
+}
+
+async function saveLanguagePreference(language) {
+  if (!state.me) {
+    return;
+  }
+  const payload = await api("/api/me/preferences", {
+    method: "PATCH",
+    body: JSON.stringify({
+      language,
+    }),
+  });
+  state.me = payload.user;
+}
+
+function applyLanguage(language, { persist = true, syncUser = true, rerender = true } = {}) {
+  const normalized = normalizeLanguage(language);
+  const previous = normalizeLanguage(state.language);
+  state.language = normalized;
+  document.documentElement.lang = normalized;
+  if (persist) {
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, normalized);
+  }
+  for (const button of els.languageButtons) {
+    const active = button.dataset.languageMode === normalized;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+  applyStaticTranslations();
+  if (rerender) {
+    rerenderLocalizedViews();
+  }
+  if (syncUser && state.me && previous !== normalized && state.me.language !== normalized) {
+    saveLanguagePreference(normalized).catch((error) => {
+      console.error(error);
+    });
+  }
+}
+
+function applyStaticTranslations() {
+  document.title = t("brand.name");
+  setText("boot-eyebrow", "brand.name");
+  setText("boot-loading-text", "boot.loading");
+  setText("login-brand-eyebrow", "brand.name");
+  setText("login-hero-title", "login.heroTitle");
+  setText("login-hero-lede", "login.heroLede");
+  setText("login-access-eyebrow", "auth.access");
+  setText("auth-login-button", "auth.login");
+  setText("auth-register-button", "auth.register");
+  setText("login-username-label", "auth.username");
+  setText("login-password-label", "auth.password");
+  setText("login-confirm-password-label", "auth.confirmPassword");
+  setText("sidebar-brand-eyebrow", "brand.name");
+  setText("chat-mode-button", "sidebar.chatMode");
+  setText("code-mode-tab-button", "sidebar.codeMode");
+  setText("admin-mode-button", "sidebar.control");
+  setText("chat-list-title", "sidebar.chats");
+  setText("job-list-title", "sidebar.jobs");
+  setText("new-chat-button", "sidebar.new");
+  setText("logout-button", "sidebar.logout");
+  setText("chat-provider-label", "chat.provider");
+  setText("chat-model-label", "chat.model");
+  if (!state.selectedConversationId) {
+    setText("chat-title", "chat.selectConversation");
+  }
+  setPlaceholder("chat-input", "chat.askPlaceholder");
+  setText("chat-add-files-button", "chat.addFiles");
+  setText("chat-submit-button", "chat.send");
+  setText("chat-pin-button", "chat.pin");
+  setText("chat-delete-button", "chat.delete");
+  setText("code-form-title", "code.formTitle");
+  setPlaceholder("code-input", "code.placeholder");
+  setText("code-add-files-button", "chat.addFiles");
+  setText("code-submit-button", "code.queueButton");
+  if (!state.selectedJob) {
+    setText("job-title", "code.noJobSelected");
+    els.jobDetail.textContent = t("code.selectJob");
+  }
+  setText("admin-title", "admin.title");
+  setText("admin-refresh-button", "admin.refresh");
+  setText("admin-users-title", "admin.users");
+  setPlaceholder("admin-user-search-input", "admin.searchUsers");
+  setText("admin-dispatch-settings-title", "admin.dispatchSettings");
+  setText("admin-routing-reset-button", "admin.reset");
+  setText("admin-retry-cooldown-label", "admin.retryCooldown");
+  setText("admin-quota-cooldown-label", "admin.quotaCooldown");
+  setText("admin-breaker-threshold-label", "admin.breakerThreshold");
+  setText("admin-breaker-cooldown-label", "admin.breakerCooldown");
+  setText("admin-history-limit-label", "admin.historyLimit");
+  setText("admin-save-dispatch-button", "admin.saveDispatch");
+  setText("admin-api-usage-title", "admin.apiUsage");
+  setText("admin-api-keys-title", "admin.apiKeys");
+  setText("admin-auto-routing-title", "admin.autoRouting");
+  setText("admin-auto-routing-note", "admin.autoRoutingNote");
+  setText("admin-dispatch-timeline-title", "admin.dispatchTimeline");
+  setText("admin-dispatch-events-title", "admin.dispatchEvents");
+  setText("admin-user-repo-title", "admin.codeRepository");
+  setText("admin-user-repo-url-label", "admin.remoteUrl");
+  setText("admin-user-repo-path-label", "admin.localPath");
+  setText("admin-user-repo-branch-label", "admin.defaultBranch");
+  setText("admin-user-repo-save-button", state.adminSelectedUser ? "admin.saveRepo" : "admin.selectUserButton");
+  setText("admin-user-records-title", "admin.userConversations");
+  setText("admin-user-jobs-title", "admin.userJobs");
+  setText("admin-user-sessions-title", "admin.userSessions");
+  setText("admin-auth-title", "admin.authenticationAudit");
+  setText("modal-eyebrow", "common.notice");
+  if (els.modalRoot) {
+    els.modalRoot.querySelector(".modal-card")?.setAttribute("aria-label", t("common.notice"));
+  }
+  document.getElementById("language-switch")?.setAttribute("aria-label", t("controls.language"));
+  document.getElementById("theme-switch")?.setAttribute("aria-label", t("controls.theme"));
+  if (els.languageButtons[0]) {
+    els.languageButtons[0].textContent = t("controls.languageZh");
+  }
+  if (els.languageButtons[1]) {
+    els.languageButtons[1].textContent = t("controls.languageEn");
+  }
+  if (els.themeButtons[0]) {
+    els.themeButtons[0].textContent = t("controls.themeLight");
+  }
+  if (els.themeButtons[1]) {
+    els.themeButtons[1].textContent = t("controls.themeDark");
+  }
+
+  const setHeader = (selector, key) => {
+    const element = document.querySelector(selector);
+    if (element) {
+      element.textContent = t(key);
+    }
+  };
+  setHeader("#admin-users-section thead th:nth-child(1)", "table.user");
+  setHeader("#admin-users-section thead th:nth-child(2)", "table.role");
+  setHeader("#admin-users-section thead th:nth-child(3)", "table.activity");
+  setHeader("#admin-users-section thead th:nth-child(4)", "table.lastLogin");
+  setHeader("#admin-users-section thead th:nth-child(5)", "table.actions");
+  setHeader("#admin-api-usage-title + .table-wrap thead th:nth-child(1)", "table.provider");
+  setHeader("#admin-api-usage-title + .table-wrap thead th:nth-child(2)", "table.keys");
+  setHeader("#admin-api-usage-title + .table-wrap thead th:nth-child(3)", "table.success");
+  setHeader("#admin-api-usage-title + .table-wrap thead th:nth-child(4)", "table.failure");
+  setHeader("#admin-api-usage-title + .table-wrap thead th:nth-child(5)", "table.cooldown");
+  setHeader("#admin-api-usage-title + .table-wrap thead th:nth-child(6)", "table.inFlight");
+  setHeader("#admin-api-usage-title + .table-wrap thead th:nth-child(7)", "table.lastUsed");
+  setHeader("#admin-api-keys-section thead th:nth-child(1)", "table.provider");
+  setHeader("#admin-api-keys-section thead th:nth-child(2)", "table.key");
+  setHeader("#admin-api-keys-section thead th:nth-child(3)", "table.status");
+  setHeader("#admin-api-keys-section thead th:nth-child(4)", "table.priority");
+  setHeader("#admin-api-keys-section thead th:nth-child(5)", "table.weight");
+  setHeader("#admin-api-keys-section thead th:nth-child(6)", "table.success");
+  setHeader("#admin-api-keys-section thead th:nth-child(7)", "table.failure");
+  setHeader("#admin-api-keys-section thead th:nth-child(8)", "table.cooldown");
+  setHeader("#admin-api-keys-section thead th:nth-child(9)", "table.lastError");
+  setHeader("#admin-auto-routing-section thead th:nth-child(1)", "table.type");
+  setHeader("#admin-auto-routing-section thead th:nth-child(2)", "table.route");
+  setHeader("#admin-auto-routing-section thead th:nth-child(3)", "table.state");
+  setHeader("#admin-auto-routing-section thead th:nth-child(4)", "table.order");
+  setHeader("#admin-auto-routing-section thead th:nth-child(5)", "table.actions");
+  setHeader("#admin-auto-routing-section thead th:nth-child(6)", "table.cooldown");
+  setHeader("#admin-dispatch-table thead th:nth-child(1)", "table.time");
+  setHeader("#admin-dispatch-table thead th:nth-child(2)", "table.type");
+  setHeader("#admin-dispatch-table thead th:nth-child(3)", "table.providerKey");
+  setHeader("#admin-dispatch-table thead th:nth-child(4)", "table.model");
+  setHeader("#admin-dispatch-table thead th:nth-child(5)", "table.userLabel");
+  setHeader("#admin-dispatch-table thead th:nth-child(6)", "table.status");
+  setHeader("#admin-dispatch-table thead th:nth-child(7)", "table.latency");
+  setHeader("#admin-dispatch-table thead th:nth-child(8)", "table.error");
+  setHeader("#admin-auth-section thead th:nth-child(1)", "table.time");
+  setHeader("#admin-auth-section thead th:nth-child(2)", "table.user");
+  setHeader("#admin-auth-section thead th:nth-child(3)", "table.event");
+  setHeader("#admin-auth-section thead th:nth-child(4)", "table.ip");
+  setHeader("#admin-auth-section thead th:nth-child(5)", "table.reason");
+  renderQueuePill();
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -177,7 +885,7 @@ function formatDateTime(value) {
   if (Number.isNaN(date.getTime())) {
     return "—";
   }
-  return date.toLocaleString();
+  return date.toLocaleString(normalizeLanguage(state.language));
 }
 
 function formatDuration(ms) {
@@ -186,9 +894,11 @@ function formatDuration(ms) {
     return "—";
   }
   if (value < 1000) {
-    return `${value} ms`;
+    return normalizeLanguage(state.language) === "zh-CN" ? `${value} 毫秒` : `${value} ms`;
   }
-  return `${(value / 1000).toFixed(2)} s`;
+  return normalizeLanguage(state.language) === "zh-CN"
+    ? `${(value / 1000).toFixed(2)} 秒`
+    : `${(value / 1000).toFixed(2)} s`;
 }
 
 function escapeCell(value, fallback = "—") {
@@ -228,8 +938,8 @@ function setAttachmentDownloadPending(card, pending) {
   if (pending) {
     card.classList.add("download-pending");
     if (hint) {
-      hint.dataset.defaultText ||= hint.textContent || "Click to download";
-      hint.textContent = "Preparing download";
+      hint.dataset.defaultText ||= hint.textContent || t("common.clickToDownload");
+      hint.textContent = t("common.preparingDownload");
     }
     return;
   }
@@ -309,10 +1019,10 @@ function openModal(options = {}) {
 
   const {
     eyebrow = "",
-    title = "Notice",
+    title = t("common.notice"),
     message = "",
-    confirmText = "Continue",
-    cancelText = "Cancel",
+    confirmText = t("common.continue"),
+    cancelText = t("common.cancel"),
     showCancel = true,
     tone = "default",
     input = null,
@@ -331,7 +1041,7 @@ function openModal(options = {}) {
 
   if (input) {
     els.modalInputRow.classList.remove("hidden");
-    els.modalInputLabel.textContent = input.label || "Value";
+    els.modalInputLabel.textContent = input.label || t("common.value");
     els.modalInput.type = input.type || "text";
     els.modalInput.placeholder = input.placeholder || "";
     els.modalInput.value = input.value || "";
@@ -365,9 +1075,9 @@ function openModal(options = {}) {
 
 function showAlertDialog(message, options = {}) {
   return openModal({
-    title: options.title || "Notice",
+    title: options.title || t("common.notice"),
     message: String(message || ""),
-    confirmText: options.confirmText || "Close",
+    confirmText: options.confirmText || t("common.close"),
     showCancel: false,
     tone: options.tone || "default",
   });
@@ -375,10 +1085,10 @@ function showAlertDialog(message, options = {}) {
 
 function showConfirmDialog(message, options = {}) {
   return openModal({
-    title: options.title || "Confirm",
+    title: options.title || t("common.confirm"),
     message: String(message || ""),
-    confirmText: options.confirmText || "Continue",
-    cancelText: options.cancelText || "Cancel",
+    confirmText: options.confirmText || t("common.continue"),
+    cancelText: options.cancelText || t("common.cancel"),
     showCancel: true,
     tone: options.tone || "default",
   });
@@ -386,14 +1096,14 @@ function showConfirmDialog(message, options = {}) {
 
 function showPromptDialog(message, options = {}) {
   return openModal({
-    title: options.title || "Input",
+    title: options.title || t("common.input"),
     message: String(message || ""),
-    confirmText: options.confirmText || "Save",
-    cancelText: options.cancelText || "Cancel",
+    confirmText: options.confirmText || t("common.save"),
+    cancelText: options.cancelText || t("common.cancel"),
     showCancel: true,
     tone: options.tone || "default",
     input: {
-      label: options.inputLabel || "Value",
+      label: options.inputLabel || t("common.value"),
       placeholder: options.placeholder || "",
       value: options.value || "",
       type: options.inputType || "text",
@@ -402,8 +1112,8 @@ function showPromptDialog(message, options = {}) {
   });
 }
 
-function showErrorDialog(error, title = "Error") {
-  const message = error instanceof Error ? error.message : String(error || "Unexpected error.");
+function showErrorDialog(error, title = t("common.error")) {
+  const message = error instanceof Error ? error.message : String(error || t("common.error"));
   return showAlertDialog(message, {
     title,
     tone: "danger",
@@ -479,7 +1189,7 @@ function syncPolling() {
 function codeBlockLanguage(code) {
   const match = String(code.className || "").match(/language-([a-z0-9_-]+)/i);
   if (!match) {
-    return "Text";
+    return normalizeLanguage(state.language) === "zh-CN" ? "文本" : "Text";
   }
   return match[1].replaceAll("-", " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
@@ -504,7 +1214,7 @@ function enhanceMarkdownBlocks(container) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "ghost-button compact-button code-copy-button";
-    button.textContent = "Copy";
+    button.textContent = t("common.copy");
     toolbar.append(label, button);
     pre.replaceWith(shell);
     shell.append(toolbar, pre);
@@ -519,7 +1229,7 @@ function setCopyButtonState(button, label) {
   }
   button.resetTimerId = String(
     window.setTimeout(() => {
-      button.textContent = "Copy";
+      button.textContent = t("common.copy");
       button.classList.remove("copied");
       delete button.resetTimerId;
     }, 1500),
@@ -540,7 +1250,7 @@ async function api(path, options = {}) {
 
   if (response.status === 401) {
     showLogin();
-    throw new Error("Authentication required.");
+    throw new Error(normalizeLanguage(state.language) === "zh-CN" ? "需要登录。" : "Authentication required.");
   }
 
   const payload = await response.json().catch(() => ({}));
@@ -555,14 +1265,14 @@ async function apiStream(path, options = {}, onEvent) {
   const response = await fetch(path, options);
   if (response.status === 401) {
     showLogin();
-    throw new Error("Authentication required.");
+    throw new Error(normalizeLanguage(state.language) === "zh-CN" ? "需要登录。" : "Authentication required.");
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || `Request failed: ${response.status}`);
   }
   if (!response.body) {
-    throw new Error("Streaming is not supported by this browser.");
+    throw new Error(t("chat.streamingUnsupported"));
   }
 
   const reader = response.body.getReader();
@@ -618,8 +1328,8 @@ function renderAuthMode() {
     registerMode ? "new-password" : "current-password",
   );
   els.loginForm.elements.confirmPassword.toggleAttribute("required", registerMode);
-  els.loginSubmitButton.textContent = registerMode ? "Create Account" : "Enter Station";
-  els.loginPanelTitle.textContent = registerMode ? "Create Account" : "Enter";
+  els.loginSubmitButton.textContent = registerMode ? t("auth.createAccount") : t("auth.enterStation");
+  els.loginPanelTitle.textContent = registerMode ? t("auth.createAccount") : t("auth.enter");
 }
 
 function setAuthMode(mode) {
@@ -638,6 +1348,7 @@ function showLogin() {
   state.chat = null;
   state.capabilities = null;
   state.adminOverview = null;
+  state.queueStats = null;
   state.conversations = [];
   state.selectedConversationId = null;
   state.messages = [];
@@ -654,12 +1365,22 @@ function showLogin() {
   els.loginScreen.classList.remove("hidden");
   els.appScreen.classList.add("hidden");
   renderAuthMode();
+  renderQueuePill();
 }
 
 function showApp() {
   els.loginScreen.classList.add("hidden");
   els.appScreen.classList.remove("hidden");
   syncPolling();
+}
+
+function renderQueuePill() {
+  const running = Number(state.queueStats?.running || 0);
+  const concurrency = Number(state.queueStats?.concurrency || 0);
+  els.queuePill.textContent =
+    running > 0 || concurrency > 0
+      ? t("code.queueRunning", { running, concurrency })
+      : t("code.queueIdle");
 }
 
 function getChatProvider(providerId) {
@@ -712,7 +1433,9 @@ function renderChatModels() {
   for (const model of provider.models) {
     const option = document.createElement("option");
     option.value = model;
-    option.textContent = provider.id === "auto" && model === "auto" ? "Auto" : model;
+    option.textContent = provider.id === "auto" && model === "auto"
+      ? (normalizeLanguage(state.language) === "zh-CN" ? "自动" : "Auto")
+      : model;
     if (model === selectedModel) {
       option.selected = true;
     }
@@ -737,7 +1460,7 @@ function renderIdentity() {
   if (!state.chat?.providers?.length) {
     const emptyOption = document.createElement("option");
     emptyOption.value = "";
-    emptyOption.textContent = "No provider configured";
+    emptyOption.textContent = t("chat.noProviderConfigured");
     els.chatProviderSelect.append(emptyOption);
     els.chatProviderSelect.disabled = true;
     els.chatModelSelect.disabled = true;
@@ -795,11 +1518,11 @@ function attachmentMarkup(attachments, variant = "default") {
                 class="attachment-card image"
                 href="${escapeHtml(attachment.url)}"
                 download="${escapeHtml(attachment.name || displayName)}"
-                title="Click to download ${escapeHtml(displayName)}"
+                title="${escapeHtml(`${t("common.clickToDownload")} ${displayName}`)}"
               >
                 <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(displayName)}" loading="lazy" />
                 <span>${escapeHtml(label)}</span>
-                <em class="attachment-download-hint">Click to download</em>
+                <em class="attachment-download-hint">${escapeHtml(t("common.clickToDownload"))}</em>
               </a>
             `;
           }
@@ -808,11 +1531,11 @@ function attachmentMarkup(attachments, variant = "default") {
               class="attachment-card"
               href="${escapeHtml(attachment.url)}"
               download="${escapeHtml(attachment.name || displayName)}"
-              title="Click to download ${escapeHtml(displayName)}"
+              title="${escapeHtml(`${t("common.clickToDownload")} ${displayName}`)}"
             >
               <strong>${escapeHtml(displayName)}</strong>
               <span>${escapeHtml(label)}</span>
-              <em class="attachment-download-hint">Click to download</em>
+              <em class="attachment-download-hint">${escapeHtml(t("common.clickToDownload"))}</em>
             </a>
           `;
         })
@@ -843,7 +1566,7 @@ function renderPendingAttachmentList(kind) {
       (file, index) => `
         <div class="attachment-chip">
           <span>${escapeHtml(file.name)} · ${escapeHtml(formatFileSize(file.size))}</span>
-          <button type="button" class="attachment-remove" data-kind="${kind}" data-index="${index}">Remove</button>
+          <button type="button" class="attachment-remove" data-kind="${kind}" data-index="${index}">${escapeHtml(t("common.remove"))}</button>
         </div>
       `,
     )
@@ -880,7 +1603,7 @@ function removePendingAttachment(kind, index) {
 function renderConversations() {
   els.conversationList.innerHTML = "";
   if (state.conversations.length === 0) {
-    els.conversationList.innerHTML = `<div class="empty-state">No chats.</div>`;
+    els.conversationList.innerHTML = `<div class="empty-state">${escapeHtml(t("chat.noChats"))}</div>`;
     return;
   }
 
@@ -892,8 +1615,8 @@ function renderConversations() {
     item.innerHTML = `
       <strong>${escapeHtml(conversation.title)}</strong>
       <div class="list-meta">
-        <span>${new Date(conversation.updatedAt).toLocaleString()}</span>
-        ${conversation.isPinned ? '<span class="pin-pill">Pinned</span>' : ""}
+        <span>${escapeHtml(formatDateTime(conversation.updatedAt))}</span>
+        ${conversation.isPinned ? `<span class="pin-pill">${escapeHtml(t("chat.pinned"))}</span>` : ""}
       </div>
     `;
     item.addEventListener("click", () => selectConversation(conversation.id));
@@ -906,17 +1629,19 @@ function renderConversationActions() {
   const hasConversation = Boolean(conversation);
   els.chatConversationActions.classList.toggle("hidden", !hasConversation);
   if (!hasConversation) {
-    els.chatPinButton.textContent = "Pin";
+    els.chatPinButton.textContent = t("chat.pin");
+    els.chatDeleteButton.textContent = t("chat.delete");
     return;
   }
 
-  els.chatPinButton.textContent = conversation.isPinned ? "Unpin" : "Pin";
+  els.chatPinButton.textContent = conversation.isPinned ? t("chat.unpin") : t("chat.pin");
+  els.chatDeleteButton.textContent = t("chat.delete");
 }
 
 function renderMessageBody(message) {
-  const content = message.content || (message.isStreaming ? "Thinking…" : "");
+  const content = message.content || (message.isStreaming ? t("chat.thinking") : "");
   if (message.role === "assistant" && !message.isError) {
-    const html = renderMarkdown(content) || `<p>${escapeHtml(content || "Thinking…")}</p>`;
+    const html = renderMarkdown(content) || `<p>${escapeHtml(content || t("chat.thinking"))}</p>`;
     return `<div class="message-body message-markdown">${html}</div>`;
   }
   return `<div class="message-body plain">${escapeHtml(content)}</div>`;
@@ -925,8 +1650,8 @@ function renderMessageBody(message) {
 function messageMetaText(message) {
   return [
     message.providerLabel || "",
-    message.isStreaming ? "Streaming" : "",
-    message.isError ? "Failed" : "",
+    message.isStreaming ? t("chat.streamingMeta") : "",
+    message.isError ? t("chat.failedMeta") : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -941,7 +1666,7 @@ function applyMessageNode(node, message) {
   if (message.isError) {
     node.classList.add("error");
   }
-  const content = message.content || (message.isStreaming ? "Thinking…" : "");
+  const content = message.content || (message.isStreaming ? t("chat.thinking") : "");
   const meta = messageMetaText(message);
   const visibleAttachments = visibleMessageAttachments(message);
   node.innerHTML = `
@@ -1002,7 +1727,7 @@ function renderMessages(options = {}) {
   els.chatMessages.innerHTML = "";
   if (state.messages.length === 0) {
     els.chatMessages.className = "message-stream empty-state";
-    els.chatMessages.textContent = "Start a chat.";
+    els.chatMessages.textContent = t("chat.start");
     renderConversationActions();
     return;
   }
@@ -1023,7 +1748,7 @@ function setChatRequestPending(isPending) {
   els.chatModelSelect.disabled = isPending;
   els.chatSubmitButton.disabled = isPending;
   els.newChatButton.disabled = isPending;
-  els.chatSubmitButton.textContent = isPending ? "Streaming…" : "Send";
+  els.chatSubmitButton.textContent = isPending ? t("chat.streaming") : t("chat.send");
 }
 
 function jobTitle(job) {
@@ -1032,9 +1757,9 @@ function jobTitle(job) {
     return trimmed;
   }
   if (job.attachments?.length) {
-    return `Attachments: ${job.attachments[0].name}${job.attachments.length > 1 ? "…" : ""}`;
+    return `${t("code.attachmentsTitle")}: ${job.attachments[0].name}${job.attachments.length > 1 ? "…" : ""}`;
   }
-  return "Untitled job";
+  return t("code.untitledJob");
 }
 
 function findJobById(jobId) {
@@ -1044,7 +1769,7 @@ function findJobById(jobId) {
 function renderJobs() {
   els.jobList.innerHTML = "";
   if (state.jobs.length === 0) {
-    els.jobList.innerHTML = `<div class="empty-state">No jobs.</div>`;
+    els.jobList.innerHTML = `<div class="empty-state">${escapeHtml(t("code.noJobs"))}</div>`;
     return;
   }
 
@@ -1057,9 +1782,9 @@ function renderJobs() {
     item.innerHTML = `
       <strong>${escapeHtml(title.slice(0, 70))}${title.length > 70 ? "…" : ""}</strong>
       <div class="list-meta">
-        ${job.isPinned ? '<span class="pin-pill">Pinned</span>' : ""}
-        <span class="status-pill ${job.status}">${job.status}</span>
-        <span>${new Date(job.createdAt).toLocaleString()}</span>
+        ${job.isPinned ? `<span class="pin-pill">${escapeHtml(t("chat.pinned"))}</span>` : ""}
+        <span class="status-pill ${job.status}">${escapeHtml(translateStatus(job.status))}</span>
+        <span>${escapeHtml(formatDateTime(job.createdAt))}</span>
       </div>
     `;
     item.addEventListener("click", () => selectJob(job.id));
@@ -1071,24 +1796,26 @@ function renderJobActions() {
   const job = state.selectedJob;
   if (!job) {
     els.jobActions.classList.add("hidden");
-    els.jobPinButton.textContent = "Pin";
+    els.jobPinButton.textContent = t("code.pin");
+    els.jobDeleteButton.textContent = t("code.delete");
     els.jobDeleteButton.disabled = false;
     els.jobDeleteButton.title = "";
     return;
   }
 
   els.jobActions.classList.remove("hidden");
-  els.jobPinButton.textContent = job.isPinned ? "Unpin" : "Pin";
+  els.jobPinButton.textContent = job.isPinned ? t("code.unpin") : t("code.pin");
+  els.jobDeleteButton.textContent = t("code.delete");
   const isRunning = job.status === "running";
   els.jobDeleteButton.disabled = isRunning;
-  els.jobDeleteButton.title = isRunning ? "Running jobs cannot be deleted." : "";
+  els.jobDeleteButton.title = isRunning ? t("code.runningDeleteBlocked") : "";
 }
 
 function renderJobDetail() {
   if (!state.selectedJob) {
-    els.jobTitle.textContent = "No job selected";
+    els.jobTitle.textContent = t("code.noJobSelected");
     els.jobDetail.className = "job-detail empty-state";
-    els.jobDetail.textContent = "Select a job.";
+    els.jobDetail.textContent = t("code.selectJob");
     renderJobActions();
     return;
   }
@@ -1101,18 +1828,18 @@ function renderJobDetail() {
 
   sections.push(`
     <div class="job-section">
-      <h4>Status</h4>
+      <h4>${escapeHtml(t("code.status"))}</h4>
       <p class="job-status-line">
-        <span class="status-pill ${job.status}">${job.status}</span>
+        <span class="status-pill ${job.status}">${escapeHtml(translateStatus(job.status))}</span>
       </p>
-      <pre>${escapeHtml(job.errorText || job.finalMessage || "No output yet.")}</pre>
+      <pre>${escapeHtml(job.errorText || job.finalMessage || t("code.noOutputYet"))}</pre>
     </div>
   `);
 
   if (job.attachments?.length) {
     sections.push(`
       <div class="job-section">
-        <h4>Input Files</h4>
+        <h4>${escapeHtml(t("code.inputFiles"))}</h4>
         ${attachmentMarkup(job.attachments)}
       </div>
     `);
@@ -1121,7 +1848,7 @@ function renderJobDetail() {
   if (job.outputFiles?.length) {
     sections.push(`
       <div class="job-section">
-        <h4>Output Files</h4>
+        <h4>${escapeHtml(t("code.outputFiles"))}</h4>
         ${attachmentMarkup(job.outputFiles)}
       </div>
     `);
@@ -1130,9 +1857,9 @@ function renderJobDetail() {
   if (job.status === "pending" || job.status === "running" || state.selectedJobLogText) {
     sections.push(`
       <div class="job-section">
-        <h4>${job.status === "pending" ? "Queue" : "Live Output"}</h4>
-        ${job.status === "pending" ? '<p class="job-meta">Waiting for a worker slot.</p>' : ""}
-        <pre>${escapeHtml(state.selectedJobLogText || (job.status === "running" ? "Waiting for live output…" : "Queued…"))}</pre>
+        <h4>${escapeHtml(job.status === "pending" ? t("code.queue") : t("code.liveOutput"))}</h4>
+        ${job.status === "pending" ? `<p class="job-meta">${escapeHtml(t("code.waitingForWorker"))}</p>` : ""}
+        <pre>${escapeHtml(state.selectedJobLogText || (job.status === "running" ? t("code.waitingForLiveOutput") : t("code.queued")))}</pre>
       </div>
     `);
   }
@@ -1140,7 +1867,7 @@ function renderJobDetail() {
   if (job.gitStatusText) {
     sections.push(`
       <div class="job-section">
-        <h4>Changed Files</h4>
+        <h4>${escapeHtml(t("code.changedFiles"))}</h4>
         <pre>${escapeHtml(job.gitStatusText)}</pre>
       </div>
     `);
@@ -1149,7 +1876,7 @@ function renderJobDetail() {
   if (job.diffText || job.diffStat) {
     sections.push(`
       <div class="job-section">
-        <h4>Diff</h4>
+        <h4>${escapeHtml(t("code.diff"))}</h4>
         ${job.diffStat ? `<p class="job-meta">${escapeHtml(job.diffStat)}</p>` : ""}
         ${job.diffText ? `<pre>${escapeHtml(job.diffText)}</pre>` : ""}
       </div>
@@ -1244,7 +1971,7 @@ function setAdminRepoFormDisabled(disabled) {
   els.adminUserRepoPathInput.disabled = disabled;
   els.adminUserRepoBranchInput.disabled = disabled;
   els.adminUserRepoSaveButton.disabled = disabled;
-  els.adminUserRepoSaveButton.textContent = disabled ? "Select a user" : "Save Repo";
+  els.adminUserRepoSaveButton.textContent = disabled ? t("admin.selectUserButton") : t("admin.saveRepo");
 }
 
 function renderAdminUserRecords() {
@@ -1253,35 +1980,44 @@ function renderAdminUserRecords() {
   }
 
   if (!state.adminSelectedUser) {
-    els.adminUserRepoTitle.textContent = "Code Repository";
+    els.adminUserRepoTitle.textContent = t("admin.codeRepository");
     els.adminUserRepoUrlInput.value = "";
     els.adminUserRepoPathInput.value = "";
     els.adminUserRepoBranchInput.value = "main";
     setAdminRepoFormDisabled(true);
-    els.adminUserRecordsTitle.textContent = "User Conversations";
+    els.adminUserRecordsTitle.textContent = t("admin.userConversations");
     els.adminUserConversations.className = "admin-user-records empty-state";
-    els.adminUserConversations.textContent = "Select a user.";
-    els.adminUserJobsTitle.textContent = "User Jobs";
+    els.adminUserConversations.textContent = t("admin.selectUser");
+    els.adminUserJobsTitle.textContent = t("admin.userJobs");
     els.adminUserJobs.className = "admin-user-records empty-state";
-    els.adminUserJobs.textContent = "Select a user.";
-    els.adminUserSessionsTitle.textContent = "User Sessions";
+    els.adminUserJobs.textContent = t("admin.selectUser");
+    els.adminUserSessionsTitle.textContent = t("admin.userSessions");
     els.adminUserSessions.className = "admin-user-records empty-state";
-    els.adminUserSessions.textContent = "Select a user.";
+    els.adminUserSessions.textContent = t("admin.selectUser");
     return;
   }
 
-  els.adminUserRepoTitle.textContent = `Code Repository · ${state.adminSelectedUser.displayName}`;
+  els.adminUserRepoTitle.textContent = t("admin.repositoryFor", {
+    displayName: state.adminSelectedUser.displayName,
+  });
   els.adminUserRepoUrlInput.value = state.adminSelectedUser.repoUrl || "";
   els.adminUserRepoPathInput.value = state.adminSelectedUser.repoLocalPath || "";
   els.adminUserRepoBranchInput.value = state.adminSelectedUser.repoDefaultBranch || "main";
   setAdminRepoFormDisabled(false);
-  els.adminUserRecordsTitle.textContent = `User Conversations · ${state.adminSelectedUser.displayName} (${state.adminSelectedUser.username})`;
-  els.adminUserJobsTitle.textContent = `User Jobs · ${state.adminSelectedUser.displayName}`;
-  els.adminUserSessionsTitle.textContent = `User Sessions · ${state.adminSelectedUser.displayName}`;
+  els.adminUserRecordsTitle.textContent = t("admin.conversationsFor", {
+    displayName: state.adminSelectedUser.displayName,
+    username: state.adminSelectedUser.username,
+  });
+  els.adminUserJobsTitle.textContent = t("admin.jobsFor", {
+    displayName: state.adminSelectedUser.displayName,
+  });
+  els.adminUserSessionsTitle.textContent = t("admin.sessionsFor", {
+    displayName: state.adminSelectedUser.displayName,
+  });
 
   if (!state.adminSelectedUserConversations.length) {
     els.adminUserConversations.className = "admin-user-records empty-state";
-    els.adminUserConversations.textContent = "No chat history.";
+    els.adminUserConversations.textContent = t("admin.noChatHistory");
   } else {
     els.adminUserConversations.className = "admin-user-records";
     els.adminUserConversations.innerHTML = state.adminSelectedUserConversations
@@ -1293,7 +2029,7 @@ function renderAdminUserRecords() {
                 <h5>${escapeHtml(conversation.title)}</h5>
                 <p>${escapeHtml(formatDateTime(conversation.updatedAt))}</p>
               </div>
-              <span>${escapeHtml(String(conversation.messages?.length || 0))} msgs</span>
+              <span>${escapeHtml(t("admin.messageCount", { count: String(conversation.messages?.length || 0) }))}</span>
             </div>
             <div class="admin-record-stream">
               ${
@@ -1301,7 +2037,7 @@ function renderAdminUserRecords() {
                   ? conversation.messages
                       .map((message) => {
                         const attachmentText = message.attachments?.length
-                          ? `<div class="table-subline">Attachments: ${escapeHtml(message.attachments.map((attachment) => attachment.label || attachment.name).join(", "))}</div>`
+                          ? `<div class="table-subline">${escapeHtml(t("admin.attachments", { files: message.attachments.map((attachment) => attachment.label || attachment.name).join(", ") }))}</div>`
                           : "";
                         return `
                           <div class="admin-record-message ${escapeHtml(message.role)}">
@@ -1316,7 +2052,7 @@ function renderAdminUserRecords() {
                         `;
                       })
                       .join("")
-                  : '<div class="table-empty">No messages recorded.</div>'
+                  : `<div class="table-empty">${escapeHtml(t("admin.noMessagesRecorded"))}</div>`
               }
             </div>
           </article>
@@ -1327,7 +2063,7 @@ function renderAdminUserRecords() {
 
   if (!state.adminSelectedUserJobs.length) {
     els.adminUserJobs.className = "admin-user-records empty-state";
-    els.adminUserJobs.textContent = "No jobs.";
+    els.adminUserJobs.textContent = t("admin.noJobs");
   } else {
     els.adminUserJobs.className = "admin-user-records";
     els.adminUserJobs.innerHTML = state.adminSelectedUserJobs
@@ -1339,16 +2075,16 @@ function renderAdminUserRecords() {
               <h5>${escapeHtml(jobTitle(job))}</h5>
               <p>${escapeHtml(formatDateTime(job.createdAt))}</p>
             </div>
-            <span class="status-pill ${escapeHtml(job.status)}">${escapeHtml(job.status)}</span>
+            <span class="status-pill ${escapeHtml(job.status)}">${escapeHtml(translateStatus(job.status))}</span>
           </div>
           <div class="admin-record-stream">
             <div class="admin-record-message assistant">
               <div class="admin-record-meta">
-                <span>${escapeHtml(job.branchName || "no branch")}</span>
-                <span>${escapeHtml(job.finishedAt ? formatDateTime(job.finishedAt) : "in progress")}</span>
+                <span>${escapeHtml(job.branchName || t("admin.noBranch"))}</span>
+                <span>${escapeHtml(job.finishedAt ? formatDateTime(job.finishedAt) : t("admin.inProgress"))}</span>
                 ${job.diffStat ? `<span>${escapeHtml(job.diffStat)}</span>` : ""}
               </div>
-              <pre>${escapeHtml(job.finalMessage || job.errorText || job.commandPreview || "No output.")}</pre>
+              <pre>${escapeHtml(job.finalMessage || job.errorText || job.commandPreview || t("admin.noOutput"))}</pre>
             </div>
           </div>
         </article>
@@ -1359,7 +2095,7 @@ function renderAdminUserRecords() {
 
   if (!state.adminSelectedUserSessions.length) {
     els.adminUserSessions.className = "admin-user-records empty-state";
-    els.adminUserSessions.textContent = "No active sessions.";
+    els.adminUserSessions.textContent = t("admin.noActiveSessions");
     return;
   }
 
@@ -1370,10 +2106,10 @@ function renderAdminUserRecords() {
         <article class="admin-record-card">
           <div class="admin-record-header">
             <div>
-              <h5>${escapeHtml(session.ipAddress || "Unknown IP")}</h5>
+              <h5>${escapeHtml(session.ipAddress || t("common.unknownIp"))}</h5>
               <p>${escapeHtml(formatDateTime(session.lastSeenAt || session.createdAt))}</p>
             </div>
-            ${session.isCurrent ? '<span class="pin-pill">Current</span>' : ""}
+            ${session.isCurrent ? `<span class="pin-pill">${escapeHtml(t("common.current"))}</span>` : ""}
           </div>
           <div class="admin-record-stream">
             <div class="admin-record-message assistant">
@@ -1381,7 +2117,7 @@ function renderAdminUserRecords() {
                 <span>${escapeHtml(formatDateTime(session.createdAt))}</span>
                 <span>${escapeHtml(formatDateTime(session.expiresAt))}</span>
               </div>
-              <pre>${escapeHtml(session.userAgent || "Unknown agent")}</pre>
+              <pre>${escapeHtml(session.userAgent || t("common.unknownAgent"))}</pre>
             </div>
           </div>
         </article>
@@ -1409,13 +2145,13 @@ function renderAdminOverview() {
 
   if (!overview) {
     els.adminSummary.innerHTML = "";
-    renderTableEmptyBody(els.adminProviderUsageTable, 7, "No API usage data loaded.");
-    renderTableEmptyBody(els.adminApiKeyTable, 9, "No admin data loaded.");
-    renderTableEmptyBody(els.adminAutoRoutingTable, 6, "No auto routing data loaded.");
-    renderTableEmptyBody(els.adminDispatchTable, 8, "No dispatch events yet.");
+    renderTableEmptyBody(els.adminProviderUsageTable, 7, t("admin.noApiUsageLoaded"));
+    renderTableEmptyBody(els.adminApiKeyTable, 9, t("admin.noAdminDataLoaded"));
+    renderTableEmptyBody(els.adminAutoRoutingTable, 6, t("admin.noAutoRoutingLoaded"));
+    renderTableEmptyBody(els.adminDispatchTable, 8, t("admin.noDispatchYet"));
     if (isAdmin) {
-      renderTableEmptyBody(els.adminUsersTable, 5, "No users loaded.");
-      renderTableEmptyBody(els.adminAuthTable, 5, "No authentication audit events yet.");
+      renderTableEmptyBody(els.adminUsersTable, 5, t("admin.noUsersLoaded"));
+      renderTableEmptyBody(els.adminAuthTable, 5, t("admin.noAuthAuditYet"));
       renderAdminUserRecords();
     }
     return;
@@ -1425,39 +2161,39 @@ function renderAdminOverview() {
   const usage = overview.apiUsage || {};
   els.adminSummary.innerHTML = `
     <article class="metric-card">
-      <span>Configured Providers</span>
+      <span>${escapeHtml(t("admin.configuredProviders"))}</span>
       <strong>${escapeHtml(String(summary.configuredProviders || 0))}</strong>
     </article>
     <article class="metric-card">
-      <span>Configured API Keys</span>
+      <span>${escapeHtml(t("admin.configuredApiKeys"))}</span>
       <strong>${escapeHtml(String(summary.configuredApiKeys || 0))}</strong>
     </article>
     <article class="metric-card">
-      <span>API Successes</span>
+      <span>${escapeHtml(t("admin.apiSuccesses"))}</span>
       <strong>${escapeHtml(String(usage.totalSuccessCount || 0))}</strong>
     </article>
     <article class="metric-card">
-      <span>API Failures</span>
+      <span>${escapeHtml(t("admin.apiFailures"))}</span>
       <strong>${escapeHtml(String(usage.totalFailureCount || 0))}</strong>
     </article>
     <article class="metric-card">
-      <span>Recent Dispatches</span>
+      <span>${escapeHtml(t("admin.recentDispatches"))}</span>
       <strong>${escapeHtml(String(usage.recentDispatches || 0))}</strong>
     </article>
     <article class="metric-card">
-      <span>Active Users</span>
+      <span>${escapeHtml(t("admin.activeUsers"))}</span>
       <strong>${escapeHtml(String(usage.activeUsers || 0))}</strong>
     </article>
     <article class="metric-card">
-      <span>Cooldown Keys</span>
+      <span>${escapeHtml(t("admin.cooldownKeys"))}</span>
       <strong>${escapeHtml(String(usage.cooldownKeys || 0))}</strong>
     </article>
     <article class="metric-card">
-      <span>Users</span>
+      <span>${escapeHtml(t("admin.usersMetric"))}</span>
       <strong>${escapeHtml(String(summary.users || 0))}</strong>
     </article>
     <article class="metric-card">
-      <span>Code Queue</span>
+      <span>${escapeHtml(t("admin.codeQueue"))}</span>
       <strong>${escapeHtml(`${summary.queue?.running || 0}/${summary.queue?.concurrency || 0}`)}</strong>
     </article>
   `;
@@ -1473,7 +2209,7 @@ function renderAdminOverview() {
   }
 
   if (!usage.providerBreakdown?.length) {
-    renderTableEmptyBody(els.adminProviderUsageTable, 7, "No API usage recorded yet.");
+    renderTableEmptyBody(els.adminProviderUsageTable, 7, t("admin.noApiUsageYet"));
   } else {
     els.adminProviderUsageTable.innerHTML = usage.providerBreakdown
       .map(
@@ -1493,7 +2229,7 @@ function renderAdminOverview() {
   }
 
   if (!overview.apiKeys?.length) {
-    renderTableEmptyBody(els.adminApiKeyTable, 9, "No API keys configured.");
+    renderTableEmptyBody(els.adminApiKeyTable, 9, t("admin.noApiKeysConfigured"));
   } else {
     els.adminApiKeyTable.innerHTML = overview.apiKeys
       .map(
@@ -1504,7 +2240,7 @@ function renderAdminOverview() {
               <strong>${escapeCell(apiKey.keyName)}</strong>
               <div class="table-subline">${escapeCell(apiKey.maskedKey)}</div>
             </td>
-            <td><span class="status-pill ${escapeHtml(apiKey.status)}">${escapeCell(apiKey.status)}</span></td>
+            <td><span class="status-pill ${escapeHtml(apiKey.status)}">${escapeCell(translateStatus(apiKey.status))}</span></td>
             <td>
               <strong>${escapeCell(apiKey.priority)}</strong>
               ${apiKey.basePriority !== apiKey.priority ? `<div class="table-subline">base ${escapeCell(apiKey.basePriority)}</div>` : ""}
@@ -1515,7 +2251,7 @@ function renderAdminOverview() {
             </td>
             <td>${escapeCell(apiKey.successCount)}</td>
             <td>${escapeCell(apiKey.failureCount)}</td>
-            <td>${escapeCell(apiKey.cooldownUntil ? formatDateTime(apiKey.cooldownUntil) : "Active")}</td>
+            <td>${escapeCell(apiKey.cooldownUntil ? formatDateTime(apiKey.cooldownUntil) : t("common.active"))}</td>
             <td>${escapeCell(apiKey.lastError, "—")}</td>
           </tr>
         `,
@@ -1526,7 +2262,7 @@ function renderAdminOverview() {
   const autoRouteGroups = autoRouteGroupsForDisplay();
   const autoRouteTypes = Object.keys(autoRouteGroups);
   if (!autoRouteTypes.length) {
-    renderTableEmptyBody(els.adminAutoRoutingTable, 6, "Auto mode is not configured.");
+    renderTableEmptyBody(els.adminAutoRoutingTable, 6, t("admin.autoModeNotConfigured"));
   } else {
     els.adminAutoRoutingTable.innerHTML = autoRouteTypes
       .flatMap((routeType) => {
@@ -1543,9 +2279,9 @@ function renderAdminOverview() {
                 isAdmin
                   ? `<label class="table-toggle">
                       <input class="table-checkbox" data-field="enabled" type="checkbox" ${route.enabled ? "checked" : ""} />
-                      <span>${escapeCell(route.enabled ? "on" : "off")}</span>
+                      <span>${escapeCell(route.enabled ? t("common.on") : t("common.off"))}</span>
                     </label>`
-                  : `<span class="table-readonly">${escapeCell(route.enabled ? "on" : "off")}</span>`
+                  : `<span class="table-readonly">${escapeCell(route.enabled ? t("common.on") : t("common.off"))}</span>`
               }
             </td>
             <td><span class="rank-pill">${escapeHtml(rankLabel(index))}</span></td>
@@ -1553,13 +2289,13 @@ function renderAdminOverview() {
               ${
                 isAdmin
                   ? `<div class="admin-table-actions">
-                      <button type="button" class="ghost-button compact-button" data-action="route-up" ${index === 0 ? "disabled" : ""}>Up</button>
-                      <button type="button" class="ghost-button compact-button" data-action="route-down" ${index === routes.length - 1 ? "disabled" : ""}>Down</button>
+                      <button type="button" class="ghost-button compact-button" data-action="route-up" ${index === 0 ? "disabled" : ""}>${escapeHtml(t("actions.up"))}</button>
+                      <button type="button" class="ghost-button compact-button" data-action="route-down" ${index === routes.length - 1 ? "disabled" : ""}>${escapeHtml(t("actions.down"))}</button>
                     </div>`
-                  : `<span class="table-readonly">Admin only</span>`
+                  : `<span class="table-readonly">${escapeHtml(t("common.adminOnly"))}</span>`
               }
             </td>
-            <td>${escapeCell(route.cooldownUntil ? formatDateTime(route.cooldownUntil) : "Active")}</td>
+            <td>${escapeCell(route.cooldownUntil ? formatDateTime(route.cooldownUntil) : t("common.active"))}</td>
           </tr>
         `);
       })
@@ -1567,7 +2303,7 @@ function renderAdminOverview() {
   }
 
   if (!overview.dispatchEvents?.length) {
-    renderTableEmptyBody(els.adminDispatchTable, 8, "No dispatch events recorded yet.");
+    renderTableEmptyBody(els.adminDispatchTable, 8, t("admin.noDispatchEventsRecorded"));
   } else {
     els.adminDispatchTable.innerHTML = overview.dispatchEvents
       .map(
@@ -1581,7 +2317,7 @@ function renderAdminOverview() {
             </td>
             <td>${escapeCell(event.model)}</td>
             <td>${escapeCell(event.username)}</td>
-            <td><span class="status-pill ${escapeHtml(event.status)}">${escapeCell(event.status)}</span></td>
+            <td><span class="status-pill ${escapeHtml(event.status)}">${escapeCell(translateStatus(event.status))}</span></td>
             <td>${escapeCell(formatDuration(event.durationMs))}</td>
             <td>${escapeCell(event.error)}</td>
           </tr>
@@ -1593,7 +2329,7 @@ function renderAdminOverview() {
   if (isAdmin) {
     const users = filteredAdminUsers();
     if (!users.length) {
-      renderTableEmptyBody(els.adminUsersTable, 5, state.adminUserSearch ? "No matching users." : "No users found.");
+      renderTableEmptyBody(els.adminUsersTable, 5, state.adminUserSearch ? t("admin.noMatchingUsers") : t("admin.noUsersFound"));
     } else {
       els.adminUsersTable.innerHTML = users
         .map((user) => {
@@ -1606,29 +2342,29 @@ function renderAdminOverview() {
                 <div class="table-subline">${escapeCell(user.username)}</div>
               </td>
               <td>
-                <strong>${escapeCell(user.isAdmin ? "admin" : "member")}</strong>
-                ${locked ? '<div class="table-subline">locked</div>' : ""}
+                <strong>${escapeCell(user.isAdmin ? t("admin.roleAdmin") : t("admin.member"))}</strong>
+                ${locked ? `<div class="table-subline">${escapeHtml(t("admin.locked"))}</div>` : ""}
               </td>
-              <td>${escapeCell(`${user.conversationCount || 0} chats · ${user.jobCount || 0} jobs · ${user.sessionCount || 0} sessions`)}</td>
-              <td>${escapeCell(user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "Never")}</td>
+              <td>${escapeCell(t("admin.activitySummary", { chats: user.conversationCount || 0, jobs: user.jobCount || 0, sessions: user.sessionCount || 0 }))}</td>
+              <td>${escapeCell(user.lastLoginAt ? formatDateTime(user.lastLoginAt) : t("common.never"))}</td>
               <td>
                 <div class="admin-user-actions">
-                  <button type="button" class="ghost-button compact-button" data-action="view" data-user-id="${escapeHtml(user.id)}">Open</button>
+                  <button type="button" class="ghost-button compact-button" data-action="view" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t("admin.open"))}</button>
                   <button
                     type="button"
                     class="ghost-button compact-button"
                     data-action="unlock"
                     data-user-id="${escapeHtml(user.id)}"
                     ${locked ? "" : "disabled"}
-                  >Unlock</button>
+                  >${escapeHtml(t("admin.unlock"))}</button>
                   <button
                     type="button"
                     class="ghost-button compact-button"
                     data-action="signout"
                     data-user-id="${escapeHtml(user.id)}"
                     ${protectedUser ? "disabled" : ""}
-                  >Sign Out</button>
-                  <button type="button" class="ghost-button compact-button" data-action="password" data-user-id="${escapeHtml(user.id)}" data-username="${escapeHtml(user.username)}">Password</button>
+                  >${escapeHtml(t("admin.signOut"))}</button>
+                  <button type="button" class="ghost-button compact-button" data-action="password" data-user-id="${escapeHtml(user.id)}" data-username="${escapeHtml(user.username)}">${escapeHtml(t("admin.password"))}</button>
                   <button
                     type="button"
                     class="ghost-button compact-button"
@@ -1636,7 +2372,7 @@ function renderAdminOverview() {
                     data-user-id="${escapeHtml(user.id)}"
                     data-is-admin="${user.isAdmin ? "1" : "0"}"
                     ${protectedUser ? "disabled" : ""}
-                  >${user.isAdmin ? "Revoke Admin" : "Make Admin"}</button>
+                  >${escapeHtml(user.isAdmin ? t("admin.revokeAdmin") : t("admin.makeAdmin"))}</button>
                   <button
                     type="button"
                     class="ghost-button compact-button danger-button"
@@ -1644,7 +2380,7 @@ function renderAdminOverview() {
                     data-user-id="${escapeHtml(user.id)}"
                     data-username="${escapeHtml(user.username)}"
                     ${protectedUser ? "disabled" : ""}
-                  >Delete</button>
+                  >${escapeHtml(t("admin.delete"))}</button>
                 </div>
               </td>
             </tr>
@@ -1654,7 +2390,7 @@ function renderAdminOverview() {
     }
 
     if (!overview.authEvents?.length) {
-      renderTableEmptyBody(els.adminAuthTable, 5, "No authentication audit events recorded yet.");
+      renderTableEmptyBody(els.adminAuthTable, 5, t("admin.noAuthAuditYet"));
     } else {
       els.adminAuthTable.innerHTML = overview.authEvents
         .map(
@@ -1708,6 +2444,12 @@ async function bootstrap() {
     state.me = payload.user;
     state.chat = payload.chat;
     state.capabilities = payload.capabilities;
+    state.queueStats = payload.queue || null;
+    applyLanguage(payload.user.language || state.language, {
+      persist: true,
+      syncUser: false,
+      rerender: false,
+    });
     const storedProviderId = window.localStorage.getItem(CHAT_PROVIDER_STORAGE_KEY);
     const validStoredProvider = payload.chat.providers.find((provider) => provider.id === storedProviderId);
     state.chat.selectedProviderId = validStoredProvider?.id || payload.chat.defaultProviderId || "";
@@ -1744,7 +2486,7 @@ async function refreshConversations() {
     await loadMessages(state.selectedConversationId);
   } else {
     state.messages = [];
-    els.chatTitle.textContent = "Select or create a conversation";
+    els.chatTitle.textContent = t("chat.selectConversation");
     renderMessages();
   }
 }
@@ -1771,7 +2513,7 @@ async function createConversation() {
   }
   const payload = await api("/api/chat/conversations", {
     method: "POST",
-    body: JSON.stringify({ title: "New chat" }),
+    body: JSON.stringify({ title: t("chat.newConversationTitle") }),
   });
   state.selectedConversationId = payload.conversation.id;
   await refreshConversations();
@@ -1820,7 +2562,12 @@ async function sendChatMessage(content, attachments) {
   const optimisticUserMessage = {
     id: `tmp_user_${Date.now()}`,
     role: "user",
-    content: content || `Sent ${attachments.length} attachment${attachments.length === 1 ? "" : "s"}.`,
+    content:
+      content ||
+      t("chat.sentAttachments", {
+        count: attachments.length,
+        suffix: attachments.length === 1 ? "" : "s",
+      }),
     attachments: [],
   };
   const placeholderMessage = {
@@ -1867,7 +2614,7 @@ async function sendChatMessage(content, attachments) {
         }
 
         if (event.type === "error") {
-          streamError = event.error || "Chat request failed.";
+          streamError = event.error || t("chat.messageFailed");
           placeholderMessage.isStreaming = false;
           placeholderMessage.isError = true;
           placeholderMessage.content = placeholderMessage.content || streamError;
@@ -1918,7 +2665,8 @@ async function refreshJobs() {
   try {
     const payload = await api("/api/code/jobs");
     state.jobs = payload.jobs;
-    els.queuePill.textContent = `${payload.queue.running}/${payload.queue.concurrency} running`;
+    state.queueStats = payload.queue || null;
+    renderQueuePill();
     if (!state.selectedJobId && state.jobs[0]) {
       state.selectedJobId = state.jobs[0].id;
     } else if (state.selectedJobId && !state.jobs.some((job) => job.id === state.selectedJobId)) {
@@ -2124,7 +2872,7 @@ els.loginForm.addEventListener("submit", async (event) => {
 
   try {
     if (state.authMode === "register" && password !== confirmPassword) {
-      throw new Error("Passwords do not match.");
+      throw new Error(t("auth.passwordsMismatch"));
     }
 
     await api(state.authMode === "register" ? "/api/auth/register" : "/api/auth/login", {
@@ -2132,6 +2880,7 @@ els.loginForm.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         username: formData.get("username"),
         password,
+        language: state.language,
       }),
     });
     els.loginForm.reset();
@@ -2152,28 +2901,28 @@ els.logoutButton.addEventListener("click", async () => {
 
 els.adminRefreshButton?.addEventListener("click", async () => {
   await refreshAdminOverview().catch((error) => {
-    return showErrorDialog(error, "Refresh failed");
+    return showErrorDialog(error, t("admin.refreshFailed"));
   });
 });
 
 els.adminDispatchForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   await saveDispatchSettings().catch((error) => {
-    return showErrorDialog(error, "Save failed");
+    return showErrorDialog(error, t("admin.saveFailed"));
   });
 });
 
 els.adminRoutingResetButton?.addEventListener("click", async () => {
-  const confirmed = await showConfirmDialog("Reset dispatch settings and auto routing to defaults?", {
-    title: "Reset routing",
-    confirmText: "Reset",
+  const confirmed = await showConfirmDialog(t("admin.resetRoutingPrompt"), {
+    title: t("admin.resetRoutingTitle"),
+    confirmText: t("admin.reset"),
     tone: "danger",
   });
   if (!confirmed) {
     return;
   }
   await resetRoutingConfig().catch((error) => {
-    return showErrorDialog(error, "Reset failed");
+    return showErrorDialog(error, t("admin.resetFailed"));
   });
 });
 
@@ -2190,7 +2939,7 @@ els.adminAutoRoutingTable?.addEventListener("change", async (event) => {
     return;
   }
   await setAutoRouteEnabled(row.dataset.routeType, row.dataset.routeId, input.checked).catch((error) => {
-    return showErrorDialog(error, "Update failed");
+    return showErrorDialog(error, t("admin.updateFailed"));
   });
 });
 
@@ -2215,7 +2964,7 @@ els.adminAutoRoutingTable?.addEventListener("click", async (event) => {
       await moveAutoRoute(row.dataset.routeType, row.dataset.routeId, 1);
     }
   } catch (error) {
-    await showErrorDialog(error, "Update failed");
+    await showErrorDialog(error, t("admin.updateFailed"));
   }
 });
 
@@ -2240,9 +2989,9 @@ els.adminUsersTable?.addEventListener("click", async (event) => {
       return;
     }
     if (action === "signout") {
-      const confirmed = await showConfirmDialog(`Sign out all active sessions for "${username}"?`, {
-        title: "Sign out sessions",
-        confirmText: "Sign Out",
+      const confirmed = await showConfirmDialog(t("admin.signOutPrompt", { username }), {
+        title: t("admin.signOutTitle"),
+        confirmText: t("admin.signOut"),
         tone: "danger",
       });
       if (!confirmed) {
@@ -2252,10 +3001,10 @@ els.adminUsersTable?.addEventListener("click", async (event) => {
       return;
     }
     if (action === "password") {
-      const nextPassword = await showPromptDialog(`Set a new password for ${username}:`, {
-        title: "Change password",
-        confirmText: "Save Password",
-        inputLabel: "New password",
+      const nextPassword = await showPromptDialog(t("admin.changePasswordPrompt", { username }), {
+        title: t("admin.changePasswordTitle"),
+        confirmText: t("admin.savePassword"),
+        inputLabel: t("admin.newPassword"),
         inputType: "password",
         autocomplete: "new-password",
       });
@@ -2274,9 +3023,9 @@ els.adminUsersTable?.addEventListener("click", async (event) => {
       return;
     }
     if (action === "delete") {
-      const confirmed = await showConfirmDialog(`Delete user "${username}" and all of their data?`, {
-        title: "Delete user",
-        confirmText: "Delete",
+      const confirmed = await showConfirmDialog(t("admin.deleteUserPrompt", { username }), {
+        title: t("admin.deleteUserTitle"),
+        confirmText: t("admin.delete"),
         tone: "danger",
       });
       if (!confirmed) {
@@ -2285,7 +3034,7 @@ els.adminUsersTable?.addEventListener("click", async (event) => {
       await deleteAdminUser(userId);
     }
   } catch (error) {
-    await showErrorDialog(error, "User update failed");
+    await showErrorDialog(error, t("admin.userUpdateFailed"));
   }
 });
 
@@ -2302,7 +3051,7 @@ els.adminUserRepoForm?.addEventListener("submit", async (event) => {
   try {
     await saveAdminUserRepoBinding();
   } catch (error) {
-    await showErrorDialog(error, "Save failed");
+    await showErrorDialog(error, t("admin.saveFailed"));
   }
 });
 
@@ -2316,7 +3065,7 @@ els.chatPinButton.addEventListener("click", async () => {
     return;
   }
   await setConversationPinned(conversation.id, !conversation.isPinned).catch((error) => {
-    return showErrorDialog(error, "Update failed");
+    return showErrorDialog(error, t("admin.updateFailed"));
   });
 });
 
@@ -2325,16 +3074,16 @@ els.chatDeleteButton.addEventListener("click", async () => {
   if (!conversation) {
     return;
   }
-  const confirmed = await showConfirmDialog(`Delete conversation "${conversation.title}"?`, {
-    title: "Delete chat",
-    confirmText: "Delete",
+  const confirmed = await showConfirmDialog(t("chat.deletePrompt", { title: conversation.title }), {
+    title: t("chat.deleteTitle"),
+    confirmText: t("chat.delete"),
     tone: "danger",
   });
   if (!confirmed) {
     return;
   }
   await deleteConversation(conversation.id).catch((error) => {
-    return showErrorDialog(error, "Delete failed");
+    return showErrorDialog(error, t("chat.deleteTitle"));
   });
 });
 
@@ -2344,7 +3093,7 @@ els.jobPinButton.addEventListener("click", async () => {
     return;
   }
   await setJobPinned(job.id, !job.isPinned).catch((error) => {
-    return showErrorDialog(error, "Update failed");
+    return showErrorDialog(error, t("admin.updateFailed"));
   });
 });
 
@@ -2356,16 +3105,16 @@ els.jobDeleteButton.addEventListener("click", async () => {
   if (job.status === "running") {
     return;
   }
-  const confirmed = await showConfirmDialog(`Delete code job "${jobTitle(job)}"?`, {
-    title: "Delete job",
-    confirmText: "Delete",
+  const confirmed = await showConfirmDialog(t("code.deletePrompt", { title: jobTitle(job) }), {
+    title: t("code.deleteTitle"),
+    confirmText: t("code.delete"),
     tone: "danger",
   });
   if (!confirmed) {
     return;
   }
   await deleteJob(job.id).catch((error) => {
-    return showErrorDialog(error, "Delete failed");
+    return showErrorDialog(error, t("code.deleteTitle"));
   });
 });
 
@@ -2422,9 +3171,9 @@ els.chatMessages.addEventListener("click", async (event) => {
 
   try {
     await copyText(code.innerText);
-    setCopyButtonState(button, "Copied");
+    setCopyButtonState(button, t("common.copied"));
   } catch {
-    setCopyButtonState(button, "Failed");
+    setCopyButtonState(button, t("common.copyFailed"));
   }
 });
 
@@ -2495,6 +3244,12 @@ for (const button of els.themeButtons) {
   });
 }
 
+for (const button of els.languageButtons) {
+  button.addEventListener("click", () => {
+    applyLanguage(button.dataset.languageMode || "en");
+  });
+}
+
 els.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.chatRequestPending) {
@@ -2512,7 +3267,7 @@ els.chatForm.addEventListener("submit", async (event) => {
     els.chatInput.value = content;
     state.pendingChatAttachments = attachments;
     renderPendingAttachmentList("chat");
-    return showErrorDialog(error, "Message failed");
+    return showErrorDialog(error, t("chat.messageFailed"));
   });
 });
 
@@ -2529,7 +3284,7 @@ els.codeForm.addEventListener("submit", async (event) => {
     els.codeInput.value = prompt;
     state.pendingCodeAttachments = attachments;
     renderPendingAttachmentList("code");
-    return showErrorDialog(error, "Queue failed");
+    return showErrorDialog(error, t("code.queueFailed"));
   });
 });
 
@@ -2542,5 +3297,7 @@ for (const button of els.authModeButtons) {
 }
 
 renderAuthMode();
+applyStaticTranslations();
+applyLanguage(state.language, { persist: false, syncUser: false, rerender: false });
 applyThemeMode(state.themeMode, { persist: false });
 bootstrap();
