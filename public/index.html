@@ -4,10 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Relay Station</title>
+    <script>
+      try {
+        const stored = localStorage.getItem("relay.theme.v1");
+        const theme = stored === "dark" || stored === "light"
+          ? stored
+          : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      } catch {
+        document.documentElement.dataset.theme = "light";
+        document.documentElement.style.colorScheme = "light";
+      }
+    </script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div id="app-shell" class="app-shell booting">
+      <div class="theme-switch" aria-label="Theme">
+        <button type="button" class="theme-button" data-theme-mode="light" aria-pressed="false">Light</button>
+        <button type="button" class="theme-button" data-theme-mode="dark" aria-pressed="false">Dark</button>
+      </div>
+
       <section id="boot-screen" class="boot-screen">
         <div class="boot-card">
           <p class="eyebrow">Relay Station</p>

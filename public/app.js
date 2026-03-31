@@ -1,3 +1,5 @@
+import { renderMarkdown } from "./markdown.js";
+
 const state = {
   me: null,
   chat: null,
@@ -5,6 +7,7 @@ const state = {
   adminOverview: null,
   authMode: "login",
   mode: "chat",
+  themeMode: document.documentElement.dataset.theme || "light",
   conversations: [],
   selectedConversationId: null,
   messages: [],
@@ -25,6 +28,7 @@ const state = {
 
 const CHAT_PROVIDER_STORAGE_KEY = "relay.chatProviderId.v2";
 const CHAT_MODEL_STORAGE_KEY_PREFIX = "relay.chatModel.v2.";
+const THEME_STORAGE_KEY = "relay.theme.v1";
 const JOB_POLL_INTERVAL_MS = 2000;
 const ATTACHMENT_DOWNLOAD_DEBOUNCE_MS = 1500;
 
@@ -33,6 +37,7 @@ const els = {
   bootScreen: document.getElementById("boot-screen"),
   loginScreen: document.getElementById("login-screen"),
   appScreen: document.getElementById("app-screen"),
+  themeButtons: Array.from(document.querySelectorAll("[data-theme-mode]")),
   authModeButtons: Array.from(document.querySelectorAll("#auth-mode-toggle [data-auth-mode]")),
   loginForm: document.getElementById("login-form"),
   loginPanelTitle: document.getElementById("login-panel-title"),
@@ -170,190 +175,6 @@ function escapeCell(value, fallback = "—") {
   return escapeHtml(text || fallback);
 }
 
-function sanitizeUrl(value) {
-  const text = String(value || "").trim();
-  if (!text) {
-    return "";
-  }
-  if (text.startsWith("/")) {
-    return text;
-  }
-  try {
-    const url = new URL(text, window.location.origin);
-    if (["http:", "https:"].includes(url.protocol)) {
-      return url.href;
-    }
-  } catch {
-    return "";
-  }
-  return "";
-}
-
-function stashHtml(html, placeholders) {
-  const token = `%%MD_PLACEHOLDER_${placeholders.length}%%`;
-  placeholders.push(html);
-  return token;
-}
-
-function restoreHtmlPlaceholders(text, placeholders) {
-  return placeholders.reduce(
-    (result, html, index) => result.replaceAll(`%%MD_PLACEHOLDER_${index}%%`, html),
-    text,
-  );
-}
-
-function renderInlineMarkdown(text) {
-  const placeholders = [];
-  let output = String(text || "");
-
-  output = output.replace(/`([^`]+)`/g, (_match, code) => stashHtml(`<code>${escapeHtml(code)}</code>`, placeholders));
-  output = escapeHtml(output);
-  output = output.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, url) => {
-    const safeUrl = sanitizeUrl(String(url || "").replaceAll("&amp;", "&"));
-    if (!safeUrl) {
-      return label;
-    }
-    return stashHtml(
-      `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noreferrer">${label}</a>`,
-      placeholders,
-    );
-  });
-  output = output.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  output = output.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
-  output = output.replace(/~~([^~]+)~~/g, "<del>$1</del>");
-  output = output.replace(
-    /(^|[\s(])(https?:\/\/[^\s<]+)/g,
-    (_match, prefix, url) =>
-      `${prefix}${stashHtml(
-        `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(url)}</a>`,
-        placeholders,
-      )}`,
-  );
-  return restoreHtmlPlaceholders(output, placeholders);
-}
-
-function renderMarkdown(text) {
-  const source = String(text || "").replace(/\r\n?/g, "\n").trim();
-  if (!source) {
-    return "";
-  }
-
-  const placeholders = [];
-  const prepared = source.replace(/```([a-z0-9_-]+)?\n?([\s\S]*?)```/gi, (_match, language, code) =>
-    stashHtml(
-      `<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`,
-      placeholders,
-    ),
-  );
-  const blocks = [];
-  const lines = prepared.split("\n");
-  let paragraph = [];
-  let list = null;
-  let quote = [];
-
-  function flushParagraph() {
-    if (!paragraph.length) {
-      return;
-    }
-    blocks.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
-    paragraph = [];
-  }
-
-  function flushList() {
-    if (!list?.items?.length) {
-      list = null;
-      return;
-    }
-    const tag = list.type === "ordered" ? "ol" : "ul";
-    blocks.push(
-      `<${tag}>${list.items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</${tag}>`,
-    );
-    list = null;
-  }
-
-  function flushQuote() {
-    if (!quote.length) {
-      return;
-    }
-    blocks.push(
-      `<blockquote>${quote.map((line) => `<p>${renderInlineMarkdown(line)}</p>`).join("")}</blockquote>`,
-    );
-    quote = [];
-  }
-
-  for (const rawLine of lines) {
-    const line = rawLine.trimEnd();
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      flushParagraph();
-      flushList();
-      flushQuote();
-      continue;
-    }
-
-    if (/^%%MD_PLACEHOLDER_\d+%%$/.test(trimmed)) {
-      flushParagraph();
-      flushList();
-      flushQuote();
-      blocks.push(trimmed);
-      continue;
-    }
-
-    const headingMatch = trimmed.match(/^(#{1,4})\s+(.*)$/);
-    if (headingMatch) {
-      flushParagraph();
-      flushList();
-      flushQuote();
-      const level = headingMatch[1].length;
-      blocks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
-      continue;
-    }
-
-    const quoteMatch = trimmed.match(/^>\s?(.*)$/);
-    if (quoteMatch) {
-      flushParagraph();
-      flushList();
-      quote.push(quoteMatch[1]);
-      continue;
-    }
-
-    const orderedMatch = trimmed.match(/^\d+\.\s+(.*)$/);
-    if (orderedMatch) {
-      flushParagraph();
-      flushQuote();
-      if (!list || list.type !== "ordered") {
-        flushList();
-        list = { type: "ordered", items: [] };
-      }
-      list.items.push(orderedMatch[1]);
-      continue;
-    }
-
-    const bulletMatch = trimmed.match(/^[-*+]\s+(.*)$/);
-    if (bulletMatch) {
-      flushParagraph();
-      flushQuote();
-      if (!list || list.type !== "unordered") {
-        flushList();
-        list = { type: "unordered", items: [] };
-      }
-      list.items.push(bulletMatch[1]);
-      continue;
-    }
-
-    flushList();
-    flushQuote();
-    paragraph.push(trimmed);
-  }
-
-  flushParagraph();
-  flushList();
-  flushQuote();
-
-  return restoreHtmlPlaceholders(blocks.join(""), placeholders);
-}
-
 function shouldAllowAttachmentDownload(url) {
   const key = String(url || "").trim();
   if (!key) {
@@ -396,6 +217,95 @@ function setAttachmentDownloadPending(card, pending) {
   if (hint?.dataset.defaultText) {
     hint.textContent = hint.dataset.defaultText;
   }
+}
+
+function normalizeThemeMode(value) {
+  return value === "dark" ? "dark" : "light";
+}
+
+function applyThemeMode(mode, { persist = true } = {}) {
+  const normalized = normalizeThemeMode(mode);
+  state.themeMode = normalized;
+  document.documentElement.dataset.theme = normalized;
+  document.documentElement.style.colorScheme = normalized;
+  if (persist) {
+    window.localStorage.setItem(THEME_STORAGE_KEY, normalized);
+  }
+  for (const button of els.themeButtons) {
+    const active = button.dataset.themeMode === normalized;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+}
+
+function copyTextFallback(text) {
+  const element = document.createElement("textarea");
+  element.value = text;
+  element.setAttribute("readonly", "");
+  element.style.position = "absolute";
+  element.style.left = "-9999px";
+  document.body.append(element);
+  element.select();
+  document.execCommand("copy");
+  element.remove();
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  copyTextFallback(text);
+}
+
+function codeBlockLanguage(code) {
+  const match = String(code.className || "").match(/language-([a-z0-9_-]+)/i);
+  if (!match) {
+    return "Text";
+  }
+  return match[1].replaceAll("-", " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function enhanceMarkdownBlocks(container) {
+  if (!container) {
+    return;
+  }
+
+  for (const pre of container.querySelectorAll(".message-markdown pre")) {
+    if (pre.parentElement?.classList.contains("code-block-shell")) {
+      continue;
+    }
+    const code = pre.querySelector("code");
+    const shell = document.createElement("div");
+    shell.className = "code-block-shell";
+    const toolbar = document.createElement("div");
+    toolbar.className = "code-block-toolbar";
+    const label = document.createElement("span");
+    label.className = "code-block-label";
+    label.textContent = codeBlockLanguage(code || pre);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost-button compact-button code-copy-button";
+    button.textContent = "Copy";
+    toolbar.append(label, button);
+    pre.replaceWith(shell);
+    shell.append(toolbar, pre);
+  }
+}
+
+function setCopyButtonState(button, label) {
+  button.textContent = label;
+  button.classList.add("copied");
+  if (button.resetTimerId) {
+    window.clearTimeout(Number(button.resetTimerId));
+  }
+  button.resetTimerId = String(
+    window.setTimeout(() => {
+      button.textContent = "Copy";
+      button.classList.remove("copied");
+      delete button.resetTimerId;
+    }, 1500),
+  );
 }
 
 async function api(path, options = {}) {
@@ -807,6 +717,7 @@ function renderMessages() {
       ${meta ? `<div class="message-meta">${escapeHtml(meta)}</div>` : ""}
       ${attachmentMarkup(visibleAttachments, "message")}
     `;
+    enhanceMarkdownBlocks(node);
     els.chatMessages.append(node);
   }
   renderConversationActions();
@@ -2203,6 +2114,26 @@ els.codeAttachmentList.addEventListener("click", (event) => {
   removePendingAttachment(button.dataset.kind, Number(button.dataset.index));
 });
 
+els.chatMessages.addEventListener("click", async (event) => {
+  const button = event.target.closest(".code-copy-button");
+  if (!button) {
+    return;
+  }
+
+  const shell = button.closest(".code-block-shell");
+  const code = shell?.querySelector("pre code");
+  if (!code) {
+    return;
+  }
+
+  try {
+    await copyText(code.innerText);
+    setCopyButtonState(button, "Copied");
+  } catch {
+    setCopyButtonState(button, "Failed");
+  }
+});
+
 document.addEventListener("click", (event) => {
   const link = event.target.closest("a.attachment-card");
   if (!link) {
@@ -2224,6 +2155,12 @@ document.addEventListener("click", (event) => {
   setAttachmentDownloadPending(link, true);
   window.setTimeout(() => setAttachmentDownloadPending(link, false), ATTACHMENT_DOWNLOAD_DEBOUNCE_MS + 120);
 });
+
+for (const button of els.themeButtons) {
+  button.addEventListener("click", () => {
+    applyThemeMode(button.dataset.themeMode || "light");
+  });
+}
 
 els.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -2284,4 +2221,5 @@ setInterval(() => {
 }, JOB_POLL_INTERVAL_MS);
 
 renderAuthMode();
+applyThemeMode(state.themeMode, { persist: false });
 bootstrap();
