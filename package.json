@@ -1,0 +1,29 @@
+{
+  "name": "ai-relay-station",
+  "version": "0.1.0",
+  "description": "No-container multi-user AI relay with chat mode and codex-powered code jobs",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --env-file=.env src/server.js",
+    "start": "node --env-file=.env src/server.js",
+    "seed:user": "node --env-file=.env scripts/seed-user.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "ai",
+    "codex",
+    "github",
+    "relay",
+    "web"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "multer": "^2.1.1",
+    "openai": "^6.33.0"
+  }
+}

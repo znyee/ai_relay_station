@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Relay Station</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <section id="login-screen" class="login-screen">
+        <div class="login-card">
+          <div class="login-copy">
+            <p class="eyebrow">Relay Station</p>
+            <h1>Your private AI workspace.</h1>
+            <p class="lede">
+              Chat runs as independent sessions. Code runs in isolated workspaces. A repository can record outputs, but it does not define the logic.
+            </p>
+          </div>
+
+          <div class="login-form-shell">
+            <p class="eyebrow">Access</p>
+            <form id="login-form" class="stack">
+              <label>
+                <span>Username</span>
+                <input type="text" name="username" autocomplete="username" required />
+              </label>
+              <label>
+                <span>Password</span>
+                <input type="password" name="password" autocomplete="current-password" required />
+              </label>
+              <button type="submit">Enter Station</button>
+            </form>
+            <p id="login-error" class="error-text"></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="app-screen" class="app-screen hidden">
+        <aside class="sidebar">
+          <div class="brand-block">
+            <p class="eyebrow">Relay Station</p>
+            <h2 id="user-name">User</h2>
+          </div>
+
+          <div class="mode-toggle">
+            <button class="mode-button active" data-mode="chat">Chat Mode</button>
+            <button class="mode-button" data-mode="code">Code Mode</button>
+            <button id="admin-mode-button" class="mode-button hidden" data-mode="admin">Admin</button>
+          </div>
+
+          <div id="chat-list-panel" class="panel">
+            <div class="panel-header">
+              <h3>Chats</h3>
+              <button id="new-chat-button" class="ghost-button">New</button>
+            </div>
+            <div id="conversation-list" class="list"></div>
+          </div>
+
+          <div id="code-list-panel" class="panel">
+            <div class="panel-header">
+              <h3>Jobs</h3>
+              <span id="queue-pill" class="queue-pill">idle</span>
+            </div>
+            <div id="job-list" class="list"></div>
+          </div>
+
+          <button id="logout-button" class="ghost-button logout-button">Log out</button>
+        </aside>
+
+        <main class="main-stage">
+          <section id="chat-mode" class="mode-panel">
+            <div class="panel hero-panel">
+              <div class="panel-header">
+                <div class="chat-header-title">
+                  <h3 id="chat-title">Select or create a conversation</h3>
+                  <div id="chat-conversation-actions" class="conversation-actions hidden">
+                    <button id="chat-pin-button" type="button" class="ghost-button compact-button">Pin</button>
+                    <button id="chat-delete-button" type="button" class="ghost-button compact-button danger-button">Delete</button>
+                  </div>
+                </div>
+                <div class="chat-pickers">
+                  <label class="model-picker">
+                    <span>Provider</span>
+                    <select id="chat-provider-select"></select>
+                  </label>
+                  <label class="model-picker">
+                    <span>Model</span>
+                    <select id="chat-model-select"></select>
+                  </label>
+                </div>
+              </div>
+              <div id="chat-messages" class="message-stream empty-state">
+                Start a new chat. Each chat window keeps its own context.
+              </div>
+              <form id="chat-form" class="composer">
+                <textarea id="chat-input" rows="4" placeholder="Ask a question or plan the next change..."></textarea>
+                <input id="chat-attachments-input" class="hidden" type="file" multiple />
+                <div id="chat-attachment-list" class="attachment-selection hidden"></div>
+                <div class="composer-actions">
+                  <label class="ghost-button attachment-trigger" for="chat-attachments-input">Add Files</label>
+                  <button type="submit">Send</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <section id="code-mode" class="mode-panel hidden">
+            <div class="code-grid">
+              <div class="panel hero-panel">
+                <div class="panel-header">
+                  <h3>Queue a code job</h3>
+                </div>
+                <form id="code-form" class="composer code-composer">
+                  <textarea id="code-input" rows="8" placeholder="Describe the task, script, automation, or implementation work..."></textarea>
+                  <input id="code-attachments-input" class="hidden" type="file" multiple />
+                  <div id="code-attachment-list" class="attachment-selection hidden"></div>
+                  <div class="composer-actions">
+                    <label class="ghost-button attachment-trigger" for="code-attachments-input">Add Files</label>
+                    <button type="submit">Queue Code Job</button>
+                  </div>
+                </form>
+              </div>
+
+              <div class="panel job-detail-panel">
+                <div class="panel-header">
+                  <div class="chat-header-title">
+                    <h3 id="job-title">No job selected</h3>
+                    <div id="job-actions" class="conversation-actions hidden">
+                      <button id="job-pin-button" type="button" class="ghost-button compact-button">Pin</button>
+                      <button id="job-delete-button" type="button" class="ghost-button compact-button danger-button">Delete</button>
+                    </div>
+                  </div>
+                </div>
+                <div id="job-detail" class="job-detail empty-state">
+                  Pick a job on the left to inspect status, summary, output files, and logs.
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="admin-mode" class="mode-panel hidden">
+            <div class="admin-grid">
+              <div class="panel hero-panel">
+                <div class="panel-header">
+                  <div class="chat-header-title">
+                    <h3>AI API Key Control</h3>
+                    <p class="panel-note">Root can inspect health, cooldowns, weighted routing, and current failover state.</p>
+                  </div>
+                  <button id="admin-refresh-button" type="button" class="ghost-button compact-button">Refresh</button>
+                </div>
+                <div id="admin-summary" class="metric-cards"></div>
+
+                <div class="admin-section">
+                  <h4>API Keys</h4>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>Provider</th>
+                          <th>Key</th>
+                          <th>Status</th>
+                          <th>Priority</th>
+                          <th>Weight</th>
+                          <th>Success</th>
+                          <th>Failure</th>
+                          <th>Cooldown</th>
+                          <th>Last Error</th>
+                        </tr>
+                      </thead>
+                      <tbody id="admin-api-key-table"></tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="admin-section">
+                  <h4>Auto Routing</h4>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>Type</th>
+                          <th>Provider</th>
+                          <th>Model</th>
+                          <th>Priority</th>
+                          <th>Weight</th>
+                          <th>Cooldown</th>
+                        </tr>
+                      </thead>
+                      <tbody id="admin-auto-routing-table"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel hero-panel">
+                <div class="panel-header">
+                  <div class="chat-header-title">
+                    <h3>Dispatch Timeline</h3>
+                    <p class="panel-note">Recent API scheduling attempts, provider failovers, and authentication audit events.</p>
+                  </div>
+                </div>
+
+                <div class="admin-section">
+                  <h4>Dispatch Events</h4>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>Time</th>
+                          <th>Type</th>
+                          <th>Provider / Key</th>
+                          <th>Model</th>
+                          <th>User</th>
+                          <th>Status</th>
+                          <th>Latency</th>
+                          <th>Error</th>
+                        </tr>
+                      </thead>
+                      <tbody id="admin-dispatch-table"></tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="admin-section">
+                  <h4>Authentication Audit</h4>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>Time</th>
+                          <th>User</th>
+                          <th>Event</th>
+                          <th>IP</th>
+                          <th>Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody id="admin-auth-table"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </section>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
