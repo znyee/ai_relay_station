@@ -25,13 +25,15 @@ const CHAT_MODEL_STORAGE_KEY_PREFIX = "relay.chatModel.v2.";
 const JOB_POLL_INTERVAL_MS = 2000;
 
 const els = {
+  appShell: document.getElementById("app-shell"),
+  bootScreen: document.getElementById("boot-screen"),
   loginScreen: document.getElementById("login-screen"),
   appScreen: document.getElementById("app-screen"),
   authModeButtons: Array.from(document.querySelectorAll("#auth-mode-toggle [data-auth-mode]")),
   loginForm: document.getElementById("login-form"),
+  loginPanelTitle: document.getElementById("login-panel-title"),
   loginConfirmPasswordRow: document.getElementById("login-confirm-password-row"),
   loginSubmitButton: document.getElementById("login-submit-button"),
-  loginHelper: document.getElementById("login-helper"),
   loginError: document.getElementById("login-error"),
   userName: document.getElementById("user-name"),
   chatListPanel: document.getElementById("chat-list-panel"),
@@ -76,6 +78,15 @@ const els = {
   adminSummary: document.getElementById("admin-summary"),
   adminUsersSection: document.getElementById("admin-users-section"),
   adminUsersTable: document.getElementById("admin-users-table"),
+  adminDispatchSettingsSection: document.getElementById("admin-dispatch-settings-section"),
+  adminDispatchForm: document.getElementById("admin-dispatch-form"),
+  adminRetryCooldownInput: document.getElementById("admin-retry-cooldown-input"),
+  adminQuotaCooldownInput: document.getElementById("admin-quota-cooldown-input"),
+  adminBreakerThresholdInput: document.getElementById("admin-breaker-threshold-input"),
+  adminBreakerCooldownInput: document.getElementById("admin-breaker-cooldown-input"),
+  adminHistoryLimitInput: document.getElementById("admin-history-limit-input"),
+  adminRoutingResetButton: document.getElementById("admin-routing-reset-button"),
+  adminAutoRoutingSaveButton: document.getElementById("admin-auto-routing-save-button"),
   adminUserRecordsSection: document.getElementById("admin-user-records-section"),
   adminUserRecordsTitle: document.getElementById("admin-user-records-title"),
   adminUserConversations: document.getElementById("admin-user-conversations"),
@@ -83,6 +94,16 @@ const els = {
   adminProviderUsageTable: document.getElementById("admin-provider-usage-table"),
   adminApiKeyTable: document.getElementById("admin-api-key-table"),
   adminAutoRoutingTable: document.getElementById("admin-auto-routing-table"),
+  adminKeyRulesSection: document.getElementById("admin-key-rules-section"),
+  adminKeyRuleForm: document.getElementById("admin-key-rule-form"),
+  adminKeyRuleProviderSelect: document.getElementById("admin-key-rule-provider-select"),
+  adminKeyRuleKeySelect: document.getElementById("admin-key-rule-key-select"),
+  adminKeyRuleScopeSelect: document.getElementById("admin-key-rule-scope-select"),
+  adminKeyRuleModelSelect: document.getElementById("admin-key-rule-model-select"),
+  adminKeyRulePriorityInput: document.getElementById("admin-key-rule-priority-input"),
+  adminKeyRuleWeightInput: document.getElementById("admin-key-rule-weight-input"),
+  adminKeyRuleEnabledInput: document.getElementById("admin-key-rule-enabled-input"),
+  adminKeyRulesTable: document.getElementById("admin-key-rules-table"),
   adminDispatchTable: document.getElementById("admin-dispatch-table"),
   adminAuthTable: document.getElementById("admin-auth-table"),
 };
@@ -135,6 +156,190 @@ function formatDuration(ms) {
 function escapeCell(value, fallback = "—") {
   const text = String(value ?? "").trim();
   return escapeHtml(text || fallback);
+}
+
+function sanitizeUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  if (text.startsWith("/")) {
+    return text;
+  }
+  try {
+    const url = new URL(text, window.location.origin);
+    if (["http:", "https:"].includes(url.protocol)) {
+      return url.href;
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+function stashHtml(html, placeholders) {
+  const token = `%%MD_PLACEHOLDER_${placeholders.length}%%`;
+  placeholders.push(html);
+  return token;
+}
+
+function restoreHtmlPlaceholders(text, placeholders) {
+  return placeholders.reduce(
+    (result, html, index) => result.replaceAll(`%%MD_PLACEHOLDER_${index}%%`, html),
+    text,
+  );
+}
+
+function renderInlineMarkdown(text) {
+  const placeholders = [];
+  let output = String(text || "");
+
+  output = output.replace(/`([^`]+)`/g, (_match, code) => stashHtml(`<code>${escapeHtml(code)}</code>`, placeholders));
+  output = escapeHtml(output);
+  output = output.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, url) => {
+    const safeUrl = sanitizeUrl(String(url || "").replaceAll("&amp;", "&"));
+    if (!safeUrl) {
+      return label;
+    }
+    return stashHtml(
+      `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noreferrer">${label}</a>`,
+      placeholders,
+    );
+  });
+  output = output.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  output = output.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+  output = output.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  output = output.replace(
+    /(^|[\s(])(https?:\/\/[^\s<]+)/g,
+    (_match, prefix, url) =>
+      `${prefix}${stashHtml(
+        `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(url)}</a>`,
+        placeholders,
+      )}`,
+  );
+  return restoreHtmlPlaceholders(output, placeholders);
+}
+
+function renderMarkdown(text) {
+  const source = String(text || "").replace(/\r\n?/g, "\n").trim();
+  if (!source) {
+    return "";
+  }
+
+  const placeholders = [];
+  const prepared = source.replace(/```([a-z0-9_-]+)?\n?([\s\S]*?)```/gi, (_match, language, code) =>
+    stashHtml(
+      `<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`,
+      placeholders,
+    ),
+  );
+  const blocks = [];
+  const lines = prepared.split("\n");
+  let paragraph = [];
+  let list = null;
+  let quote = [];
+
+  function flushParagraph() {
+    if (!paragraph.length) {
+      return;
+    }
+    blocks.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  }
+
+  function flushList() {
+    if (!list?.items?.length) {
+      list = null;
+      return;
+    }
+    const tag = list.type === "ordered" ? "ol" : "ul";
+    blocks.push(
+      `<${tag}>${list.items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</${tag}>`,
+    );
+    list = null;
+  }
+
+  function flushQuote() {
+    if (!quote.length) {
+      return;
+    }
+    blocks.push(
+      `<blockquote>${quote.map((line) => `<p>${renderInlineMarkdown(line)}</p>`).join("")}</blockquote>`,
+    );
+    quote = [];
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      continue;
+    }
+
+    if (/^%%MD_PLACEHOLDER_\d+%%$/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      blocks.push(trimmed);
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,4})\s+(.*)$/);
+    if (headingMatch) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      const level = headingMatch[1].length;
+      blocks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    const quoteMatch = trimmed.match(/^>\s?(.*)$/);
+    if (quoteMatch) {
+      flushParagraph();
+      flushList();
+      quote.push(quoteMatch[1]);
+      continue;
+    }
+
+    const orderedMatch = trimmed.match(/^\d+\.\s+(.*)$/);
+    if (orderedMatch) {
+      flushParagraph();
+      flushQuote();
+      if (!list || list.type !== "ordered") {
+        flushList();
+        list = { type: "ordered", items: [] };
+      }
+      list.items.push(orderedMatch[1]);
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*+]\s+(.*)$/);
+    if (bulletMatch) {
+      flushParagraph();
+      flushQuote();
+      if (!list || list.type !== "unordered") {
+        flushList();
+        list = { type: "unordered", items: [] };
+      }
+      list.items.push(bulletMatch[1]);
+      continue;
+    }
+
+    flushList();
+    flushQuote();
+    paragraph.push(trimmed);
+  }
+
+  flushParagraph();
+  flushList();
+  flushQuote();
+
+  return restoreHtmlPlaceholders(blocks.join(""), placeholders);
 }
 
 async function api(path, options = {}) {
@@ -227,15 +432,17 @@ function renderAuthMode() {
   );
   els.loginForm.elements.confirmPassword.toggleAttribute("required", registerMode);
   els.loginSubmitButton.textContent = registerMode ? "Create Account" : "Enter Station";
-  els.loginHelper.textContent = registerMode
-    ? "Create a new account with a username, password, and one confirmation step."
-    : "Use an existing account to sign in. New users can register directly.";
+  els.loginPanelTitle.textContent = registerMode ? "Create Account" : "Enter";
 }
 
 function setAuthMode(mode) {
   state.authMode = mode === "register" ? "register" : "login";
   els.loginError.textContent = "";
   renderAuthMode();
+}
+
+function setBooting(isBooting) {
+  els.appShell.classList.toggle("booting", Boolean(isBooting));
 }
 
 function showLogin() {
@@ -468,7 +675,7 @@ function removePendingAttachment(kind, index) {
 function renderConversations() {
   els.conversationList.innerHTML = "";
   if (state.conversations.length === 0) {
-    els.conversationList.innerHTML = `<div class="empty-state">No conversations yet.</div>`;
+    els.conversationList.innerHTML = `<div class="empty-state">No chats.</div>`;
     return;
   }
 
@@ -501,11 +708,20 @@ function renderConversationActions() {
   els.chatPinButton.textContent = conversation.isPinned ? "Unpin" : "Pin";
 }
 
+function renderMessageBody(message) {
+  const content = message.content || (message.isStreaming ? "Thinking…" : "");
+  if (message.role === "assistant" && !message.isError) {
+    const html = renderMarkdown(content) || `<p>${escapeHtml(content || "Thinking…")}</p>`;
+    return `<div class="message-body message-markdown">${html}</div>`;
+  }
+  return `<div class="message-body plain">${escapeHtml(content)}</div>`;
+}
+
 function renderMessages() {
   els.chatMessages.innerHTML = "";
   if (state.messages.length === 0) {
     els.chatMessages.className = "message-stream empty-state";
-    els.chatMessages.textContent = "Start a new chat. Each chat window keeps its own context.";
+    els.chatMessages.textContent = "Start a chat.";
     renderConversationActions();
     return;
   }
@@ -528,7 +744,7 @@ function renderMessages() {
     ].filter(Boolean).join(" · ");
     const visibleAttachments = visibleMessageAttachments(message);
     node.innerHTML = `
-      <div class="message-body">${escapeHtml(content)}</div>
+      ${renderMessageBody({ ...message, content })}
       ${meta ? `<div class="message-meta">${escapeHtml(meta)}</div>` : ""}
       ${attachmentMarkup(visibleAttachments, "message")}
     `;
@@ -563,7 +779,7 @@ function jobTitle(job) {
 function renderJobs() {
   els.jobList.innerHTML = "";
   if (state.jobs.length === 0) {
-    els.jobList.innerHTML = `<div class="empty-state">No code jobs queued yet.</div>`;
+    els.jobList.innerHTML = `<div class="empty-state">No jobs.</div>`;
     return;
   }
 
@@ -607,7 +823,7 @@ function renderJobDetail() {
   if (!state.selectedJob) {
     els.jobTitle.textContent = "No job selected";
     els.jobDetail.className = "job-detail empty-state";
-    els.jobDetail.textContent = "Pick a job on the left to inspect status, summary, output files, and logs.";
+    els.jobDetail.textContent = "Select a job.";
     renderJobActions();
     return;
   }
@@ -650,7 +866,7 @@ function renderJobDetail() {
     sections.push(`
       <div class="job-section">
         <h4>${job.status === "pending" ? "Queue" : "Live Output"}</h4>
-        ${job.status === "pending" ? '<p class="job-meta">Waiting for a worker slot. This panel refreshes automatically.</p>' : ""}
+        ${job.status === "pending" ? '<p class="job-meta">Waiting for a worker slot.</p>' : ""}
         <pre>${escapeHtml(state.selectedJobLogText || (job.status === "running" ? "Waiting for live output…" : "Queued…"))}</pre>
       </div>
     `);
@@ -682,6 +898,128 @@ function renderTableEmptyBody(element, colSpan, message) {
   element.innerHTML = `<tr><td colspan="${colSpan}" class="table-empty">${escapeHtml(message)}</td></tr>`;
 }
 
+function currentRoutingConfig() {
+  return (
+    state.adminOverview?.routingConfig || {
+      dispatch: {
+        retryCooldownMs: 0,
+        quotaCooldownMs: 0,
+        circuitBreakerThreshold: 3,
+        circuitBreakerMs: 0,
+        dispatchHistoryLimit: 200,
+      },
+      routeOverrides: [],
+      keyRules: [],
+    }
+  );
+}
+
+function cloneRoutingConfig() {
+  return JSON.parse(JSON.stringify(currentRoutingConfig()));
+}
+
+function providerForAdmin(providerId) {
+  return state.chat?.providers?.find((provider) => provider.id === providerId) || null;
+}
+
+function adminApiKeysForProvider(providerId) {
+  return (state.adminOverview?.apiKeys || []).filter((apiKey) => apiKey.providerId === providerId);
+}
+
+function populateSelectOptions(element, options, selectedValue = "") {
+  if (!element) {
+    return;
+  }
+
+  const normalizedOptions = options || [];
+  element.innerHTML = "";
+  for (const optionData of normalizedOptions) {
+    const option = document.createElement("option");
+    option.value = optionData.value;
+    option.textContent = optionData.label;
+    if (optionData.value === selectedValue) {
+      option.selected = true;
+    }
+    element.append(option);
+  }
+
+  if (!element.value && normalizedOptions[0]) {
+    element.value = normalizedOptions[0].value;
+  }
+}
+
+function syncAdminKeyRuleForm({ preserveValues = true } = {}) {
+  if (!state.me?.isAdmin) {
+    return;
+  }
+
+  const providerOptions = Array.from(
+    new Map(
+      (state.adminOverview?.apiKeys || []).map((apiKey) => [
+        apiKey.providerId,
+        {
+          value: apiKey.providerId,
+          label: apiKey.providerLabel,
+        },
+      ]),
+    ).values(),
+  );
+  populateSelectOptions(els.adminKeyRuleProviderSelect, providerOptions, els.adminKeyRuleProviderSelect.value);
+  const providerId = els.adminKeyRuleProviderSelect.value || providerOptions[0]?.value || "";
+  const apiKeys = adminApiKeysForProvider(providerId);
+  populateSelectOptions(
+    els.adminKeyRuleKeySelect,
+    apiKeys.map((apiKey) => ({
+      value: apiKey.id,
+      label: apiKey.keyName,
+    })),
+    els.adminKeyRuleKeySelect.value,
+  );
+
+  const selectedKeyId = els.adminKeyRuleKeySelect.value || apiKeys[0]?.id || "";
+  const selectedKey = apiKeys.find((apiKey) => apiKey.id === selectedKeyId) || apiKeys[0] || null;
+  const scope = els.adminKeyRuleScopeSelect.value === "model" ? "model" : "all";
+  const provider = providerForAdmin(providerId);
+  const modelOptions =
+    scope === "model"
+      ? (selectedKey?.models || provider?.models || []).map((model) => ({
+          value: model,
+          label: model,
+        }))
+      : [{ value: "", label: "All Models" }];
+  populateSelectOptions(els.adminKeyRuleModelSelect, modelOptions, els.adminKeyRuleModelSelect.value);
+  els.adminKeyRuleModelSelect.disabled = scope !== "model";
+
+  if (!preserveValues || !els.adminKeyRulePriorityInput.value) {
+    els.adminKeyRulePriorityInput.value = String(selectedKey?.priority ?? 100);
+  }
+  if (!preserveValues || !els.adminKeyRuleWeightInput.value) {
+    els.adminKeyRuleWeightInput.value = String(selectedKey?.weight ?? 1);
+  }
+  if (!preserveValues) {
+    els.adminKeyRuleEnabledInput.checked = selectedKey?.enabled !== false;
+  }
+}
+
+async function saveRoutingConfig(routingConfig) {
+  await api("/api/admin/routing-config", {
+    method: "PUT",
+    body: JSON.stringify(routingConfig),
+  });
+  await refreshAdminOverview();
+}
+
+function collectAutoRouteOverrides() {
+  return Array.from(els.adminAutoRoutingTable.querySelectorAll("tr[data-route-type]")).map((row) => ({
+    routeType: row.dataset.routeType,
+    providerId: row.dataset.providerId,
+    model: row.dataset.model,
+    enabled: row.querySelector('[data-field="enabled"]')?.checked ?? true,
+    priority: Number(row.querySelector('[data-field="priority"]')?.value || row.dataset.priority || 100),
+    weight: Number(row.querySelector('[data-field="weight"]')?.value || row.dataset.weight || 1),
+  }));
+}
+
 function renderAdminUserRecords() {
   if (!state.me?.isAdmin) {
     return;
@@ -690,8 +1028,7 @@ function renderAdminUserRecords() {
   if (!state.adminSelectedUser) {
     els.adminUserRecordsTitle.textContent = "User Conversations";
     els.adminUserConversations.className = "admin-user-records empty-state";
-    els.adminUserConversations.textContent =
-      "Select a user from the management table to inspect all of their chat records.";
+    els.adminUserConversations.textContent = "Select a user.";
     return;
   }
 
@@ -699,7 +1036,7 @@ function renderAdminUserRecords() {
 
   if (!state.adminSelectedUserConversations.length) {
     els.adminUserConversations.className = "admin-user-records empty-state";
-    els.adminUserConversations.textContent = "This user has no chat history.";
+    els.adminUserConversations.textContent = "No chat history.";
     return;
   }
 
@@ -753,17 +1090,21 @@ function renderAdminOverview() {
 
   const isAdmin = Boolean(state.me.isAdmin);
   els.adminUsersSection.classList.toggle("hidden", !isAdmin);
+  els.adminDispatchSettingsSection.classList.toggle("hidden", !isAdmin);
+  els.adminKeyRulesSection.classList.toggle("hidden", !isAdmin);
   els.adminUserRecordsSection.classList.toggle("hidden", !isAdmin);
   els.adminAuthSection.classList.toggle("hidden", !isAdmin);
+  els.adminAutoRoutingSaveButton.classList.toggle("hidden", !isAdmin);
 
   if (!overview) {
     els.adminSummary.innerHTML = "";
     renderTableEmptyBody(els.adminProviderUsageTable, 7, "No API usage data loaded.");
     renderTableEmptyBody(els.adminApiKeyTable, 9, "No admin data loaded.");
-    renderTableEmptyBody(els.adminAutoRoutingTable, 6, "No auto routing data loaded.");
+    renderTableEmptyBody(els.adminAutoRoutingTable, 7, "No auto routing data loaded.");
     renderTableEmptyBody(els.adminDispatchTable, 8, "No dispatch events yet.");
     if (isAdmin) {
       renderTableEmptyBody(els.adminUsersTable, 4, "No users loaded.");
+      renderTableEmptyBody(els.adminKeyRulesTable, 8, "No key rules configured.");
       renderTableEmptyBody(els.adminAuthTable, 5, "No authentication audit events yet.");
       renderAdminUserRecords();
     }
@@ -811,6 +1152,15 @@ function renderAdminOverview() {
     </article>
   `;
 
+  if (isAdmin) {
+    const routingConfig = currentRoutingConfig();
+    els.adminRetryCooldownInput.value = String(routingConfig.dispatch?.retryCooldownMs ?? 0);
+    els.adminQuotaCooldownInput.value = String(routingConfig.dispatch?.quotaCooldownMs ?? 0);
+    els.adminBreakerThresholdInput.value = String(routingConfig.dispatch?.circuitBreakerThreshold ?? 3);
+    els.adminBreakerCooldownInput.value = String(routingConfig.dispatch?.circuitBreakerMs ?? 0);
+    els.adminHistoryLimitInput.value = String(routingConfig.dispatch?.dispatchHistoryLimit ?? 200);
+  }
+
   if (!usage.providerBreakdown?.length) {
     renderTableEmptyBody(els.adminProviderUsageTable, 7, "No API usage recorded yet.");
   } else {
@@ -842,10 +1192,17 @@ function renderAdminOverview() {
             <td>
               <strong>${escapeCell(apiKey.keyName)}</strong>
               <div class="table-subline">${escapeCell(apiKey.maskedKey)}</div>
+              ${apiKey.ruleCount ? `<div class="table-subline">${escapeCell(`${apiKey.ruleCount} rule${apiKey.ruleCount === 1 ? "" : "s"}`)}</div>` : ""}
             </td>
             <td><span class="status-pill ${escapeHtml(apiKey.status)}">${escapeCell(apiKey.status)}</span></td>
-            <td>${escapeCell(apiKey.priority)}</td>
-            <td>${escapeCell(apiKey.weight)}</td>
+            <td>
+              <strong>${escapeCell(apiKey.priority)}</strong>
+              ${apiKey.basePriority !== apiKey.priority ? `<div class="table-subline">base ${escapeCell(apiKey.basePriority)}</div>` : ""}
+            </td>
+            <td>
+              <strong>${escapeCell(apiKey.weight)}</strong>
+              ${apiKey.baseWeight !== apiKey.weight ? `<div class="table-subline">base ${escapeCell(apiKey.baseWeight)}</div>` : ""}
+            </td>
             <td>${escapeCell(apiKey.successCount)}</td>
             <td>${escapeCell(apiKey.failureCount)}</td>
             <td>${escapeCell(apiKey.cooldownUntil ? formatDateTime(apiKey.cooldownUntil) : "Active")}</td>
@@ -860,22 +1217,81 @@ function renderAdminOverview() {
     (routes || []).map((route) => ({ routeType, ...route })),
   );
   if (!autoRoutes.length) {
-    renderTableEmptyBody(els.adminAutoRoutingTable, 6, "Auto mode is not configured.");
+    renderTableEmptyBody(els.adminAutoRoutingTable, 7, "Auto mode is not configured.");
   } else {
     els.adminAutoRoutingTable.innerHTML = autoRoutes
       .map(
         (route) => `
-          <tr>
+          <tr
+            data-route-type="${escapeHtml(route.routeType)}"
+            data-provider-id="${escapeHtml(route.providerId)}"
+            data-model="${escapeHtml(route.model)}"
+            data-priority="${escapeHtml(route.priority)}"
+            data-weight="${escapeHtml(route.weight)}"
+          >
             <td>${escapeCell(route.routeType)}</td>
             <td>${escapeCell(route.providerLabel)}</td>
             <td>${escapeCell(route.model)}</td>
-            <td>${escapeCell(route.priority)}</td>
-            <td>${escapeCell(route.weight)}</td>
+            <td>
+              ${
+                isAdmin
+                  ? `<input class="table-checkbox" data-field="enabled" type="checkbox" ${route.enabled ? "checked" : ""} />`
+                  : escapeCell(route.enabled ? "on" : "off")
+              }
+            </td>
+            <td>
+              ${
+                isAdmin
+                  ? `<div class="table-stack"><input class="table-input" data-field="priority" type="number" value="${escapeHtml(route.priority)}" /><div class="table-subline">base ${escapeCell(route.basePriority)}</div></div>`
+                  : `${escapeCell(route.priority)}${route.basePriority !== route.priority ? `<div class="table-subline">base ${escapeCell(route.basePriority)}</div>` : ""}`
+              }
+            </td>
+            <td>
+              ${
+                isAdmin
+                  ? `<div class="table-stack"><input class="table-input" data-field="weight" type="number" min="1" value="${escapeHtml(route.weight)}" /><div class="table-subline">base ${escapeCell(route.baseWeight)}</div></div>`
+                  : `${escapeCell(route.weight)}${route.baseWeight !== route.weight ? `<div class="table-subline">base ${escapeCell(route.baseWeight)}</div>` : ""}`
+              }
+            </td>
             <td>${escapeCell(route.cooldownUntil ? formatDateTime(route.cooldownUntil) : "Active")}</td>
           </tr>
         `,
       )
       .join("");
+  }
+
+  if (isAdmin) {
+    const keyIndex = new Map((overview.apiKeys || []).map((apiKey) => [apiKey.id, apiKey]));
+    const keyRules = currentRoutingConfig().keyRules || [];
+    if (!keyRules.length) {
+      renderTableEmptyBody(els.adminKeyRulesTable, 8, "No key rules configured.");
+    } else {
+      els.adminKeyRulesTable.innerHTML = keyRules
+        .map((rule) => {
+          const apiKey = keyIndex.get(rule.keyId);
+          return `
+            <tr>
+              <td>${escapeCell(apiKey?.providerLabel || rule.providerId)}</td>
+              <td>${escapeCell(apiKey?.keyName || rule.keyId)}</td>
+              <td>${escapeCell(rule.scope === "model" ? "one model" : "all models")}</td>
+              <td>${escapeCell(rule.model || "All")}</td>
+              <td>${escapeCell(rule.enabled ? "on" : "off")}</td>
+              <td>${escapeCell(rule.priority)}</td>
+              <td>${escapeCell(rule.weight)}</td>
+              <td>
+                <button
+                  type="button"
+                  class="ghost-button compact-button danger-button"
+                  data-action="delete-rule"
+                  data-rule-id="${escapeHtml(rule.id)}"
+                >Delete</button>
+              </td>
+            </tr>
+          `;
+        })
+        .join("");
+    }
+    syncAdminKeyRuleForm({ preserveValues: false });
   }
 
   if (!overview.dispatchEvents?.length) {
@@ -980,6 +1396,7 @@ async function refreshAdminOverview() {
 }
 
 async function bootstrap() {
+  setBooting(true);
   try {
     const payload = await api("/api/me");
     state.me = payload.user;
@@ -1003,6 +1420,8 @@ async function bootstrap() {
     }
   } catch {
     showLogin();
+  } finally {
+    setBooting(false);
   }
 }
 
@@ -1291,6 +1710,67 @@ async function loadAdminUserConversations(userId) {
   renderAdminUserRecords();
 }
 
+async function resetRoutingConfig() {
+  await api("/api/admin/routing-config", {
+    method: "DELETE",
+  });
+  await refreshAdminOverview();
+}
+
+async function saveDispatchSettings() {
+  const routingConfig = cloneRoutingConfig();
+  routingConfig.dispatch = {
+    retryCooldownMs: Number(els.adminRetryCooldownInput.value || 0),
+    quotaCooldownMs: Number(els.adminQuotaCooldownInput.value || 0),
+    circuitBreakerThreshold: Number(els.adminBreakerThresholdInput.value || 1),
+    circuitBreakerMs: Number(els.adminBreakerCooldownInput.value || 0),
+    dispatchHistoryLimit: Number(els.adminHistoryLimitInput.value || 200),
+  };
+  await saveRoutingConfig(routingConfig);
+}
+
+async function saveAutoRoutingOverrides() {
+  const routingConfig = cloneRoutingConfig();
+  routingConfig.routeOverrides = collectAutoRouteOverrides();
+  await saveRoutingConfig(routingConfig);
+}
+
+async function saveKeyRule() {
+  const providerId = String(els.adminKeyRuleProviderSelect.value || "").trim();
+  const keyId = String(els.adminKeyRuleKeySelect.value || "").trim();
+  const scope = els.adminKeyRuleScopeSelect.value === "model" ? "model" : "all";
+  const model = scope === "model" ? String(els.adminKeyRuleModelSelect.value || "").trim() : "";
+  if (!providerId || !keyId) {
+    throw new Error("Select a provider and key.");
+  }
+  if (scope === "model" && !model) {
+    throw new Error("Select a model.");
+  }
+
+  const routingConfig = cloneRoutingConfig();
+  const nextRule = {
+    providerId,
+    keyId,
+    scope,
+    model,
+    enabled: els.adminKeyRuleEnabledInput.checked,
+    priority: Number(els.adminKeyRulePriorityInput.value || 100),
+    weight: Number(els.adminKeyRuleWeightInput.value || 1),
+  };
+  const ruleIdentity = `${providerId}:${keyId}:${scope}:${model || "*"}`;
+  routingConfig.keyRules = (routingConfig.keyRules || []).filter(
+    (rule) => `${rule.providerId}:${rule.keyId}:${rule.scope}:${rule.model || "*"}` !== ruleIdentity,
+  );
+  routingConfig.keyRules.push(nextRule);
+  await saveRoutingConfig(routingConfig);
+}
+
+async function deleteKeyRule(ruleId) {
+  const routingConfig = cloneRoutingConfig();
+  routingConfig.keyRules = (routingConfig.keyRules || []).filter((rule) => rule.id !== ruleId);
+  await saveRoutingConfig(routingConfig);
+}
+
 els.loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   els.loginError.textContent = "";
@@ -1328,6 +1808,57 @@ els.logoutButton.addEventListener("click", async () => {
 
 els.adminRefreshButton?.addEventListener("click", async () => {
   await refreshAdminOverview().catch((error) => {
+    window.alert(error.message);
+  });
+});
+
+els.adminDispatchForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await saveDispatchSettings().catch((error) => {
+    window.alert(error.message);
+  });
+});
+
+els.adminRoutingResetButton?.addEventListener("click", async () => {
+  if (!window.confirm("Reset dispatch, route, and key rules to defaults?")) {
+    return;
+  }
+  await resetRoutingConfig().catch((error) => {
+    window.alert(error.message);
+  });
+});
+
+els.adminAutoRoutingSaveButton?.addEventListener("click", async () => {
+  await saveAutoRoutingOverrides().catch((error) => {
+    window.alert(error.message);
+  });
+});
+
+els.adminKeyRuleForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await saveKeyRule().catch((error) => {
+    window.alert(error.message);
+  });
+});
+
+els.adminKeyRuleProviderSelect?.addEventListener("change", () => {
+  syncAdminKeyRuleForm({ preserveValues: false });
+});
+
+els.adminKeyRuleKeySelect?.addEventListener("change", () => {
+  syncAdminKeyRuleForm({ preserveValues: false });
+});
+
+els.adminKeyRuleScopeSelect?.addEventListener("change", () => {
+  syncAdminKeyRuleForm({ preserveValues: true });
+});
+
+els.adminKeyRulesTable?.addEventListener("click", async (event) => {
+  const button = event.target.closest('button[data-action="delete-rule"]');
+  if (!button) {
+    return;
+  }
+  await deleteKeyRule(button.dataset.ruleId).catch((error) => {
     window.alert(error.message);
   });
 });

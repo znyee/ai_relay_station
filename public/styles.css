@@ -84,6 +84,38 @@ button {
   padding: 28px;
 }
 
+.boot-screen {
+  display: none;
+  min-height: calc(100vh - 56px);
+  place-items: center;
+}
+
+.app-shell.booting .boot-screen {
+  display: grid;
+}
+
+.app-shell.booting .login-screen,
+.app-shell.booting .app-screen {
+  display: none !important;
+}
+
+.boot-card {
+  display: grid;
+  gap: 12px;
+  min-width: 220px;
+  padding: 28px 30px;
+  border-radius: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(247, 249, 252, 0.74));
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+}
+
+.boot-card strong {
+  font-size: 1.6rem;
+  letter-spacing: -0.05em;
+}
+
 .login-screen,
 .app-screen {
   min-height: calc(100vh - 48px);
@@ -116,8 +148,8 @@ button {
   position: relative;
   display: grid;
   align-content: center;
-  gap: 24px;
-  min-height: 600px;
+  gap: 18px;
+  min-height: 520px;
   color: white;
   background:
     linear-gradient(160deg, rgba(20, 22, 28, 0.95), rgba(16, 18, 24, 0.88)),
@@ -629,7 +661,92 @@ button:disabled {
 
 .message-body {
   line-height: 1.62;
+  overflow-wrap: anywhere;
+}
+
+.message-body.plain {
   white-space: pre-wrap;
+}
+
+.message-markdown {
+  display: grid;
+  gap: 14px;
+}
+
+.message-markdown > * {
+  margin: 0;
+}
+
+.message-markdown h1,
+.message-markdown h2,
+.message-markdown h3,
+.message-markdown h4 {
+  letter-spacing: -0.04em;
+  line-height: 1.15;
+}
+
+.message-markdown h1 {
+  font-size: 1.55rem;
+}
+
+.message-markdown h2 {
+  font-size: 1.35rem;
+}
+
+.message-markdown h3 {
+  font-size: 1.16rem;
+}
+
+.message-markdown p,
+.message-markdown li {
+  line-height: 1.72;
+}
+
+.message-markdown ul,
+.message-markdown ol {
+  display: grid;
+  gap: 8px;
+  padding-left: 1.3rem;
+}
+
+.message-markdown blockquote {
+  padding-left: 16px;
+  border-left: 3px solid rgba(0, 113, 227, 0.22);
+  color: var(--ink-soft);
+}
+
+.message-markdown code {
+  display: inline-block;
+  padding: 0.08rem 0.42rem;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.07);
+  color: #0f172a;
+  font-size: 0.92em;
+}
+
+.message-markdown pre {
+  overflow: auto;
+  padding: 16px;
+  border-radius: 18px;
+  background: #11161f;
+  color: rgba(255, 255, 255, 0.92);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.message-markdown pre code {
+  display: block;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.message-markdown a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.message-markdown a:hover {
+  text-decoration: underline;
 }
 
 .message-meta {
@@ -849,10 +966,71 @@ button:disabled {
   margin-top: 16px;
 }
 
+.admin-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.admin-section-header h4 {
+  margin-bottom: 0;
+}
+
 .admin-section h4 {
   margin: 0 0 12px;
   font-size: 0.98rem;
   letter-spacing: -0.02em;
+}
+
+.admin-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.admin-form-grid-tight {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.admin-form-actions {
+  display: flex;
+  align-items: flex-end;
+}
+
+.admin-form-actions button {
+  width: 100%;
+}
+
+.checkbox-field {
+  display: grid;
+  gap: 9px;
+}
+
+.checkbox-field input {
+  width: 20px;
+  height: 20px;
+  margin: 10px 0 0;
+  accent-color: var(--accent);
+}
+
+.table-input {
+  min-height: 38px;
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+
+.table-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.table-stack {
+  display: grid;
+  gap: 6px;
 }
 
 .admin-user-actions {
@@ -1156,10 +1334,6 @@ button:disabled {
   .sidebar,
   .panel {
     padding: 18px;
-  }
-
-  .login-stats {
-    grid-template-columns: 1fr;
   }
 
   .fact-row,

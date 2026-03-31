@@ -96,6 +96,23 @@ test("database tracks admin flags, login failures, and auth audit events", async
   assert.equal(db.listAuthAuditEvents(10)[0].eventType, "login_locked");
 });
 
+test("database can persist JSON app settings", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-station-"));
+  const db = createDatabase(path.join(tempDir, "app.db"));
+
+  const value = {
+    dispatch: {
+      retryCooldownMs: 10_000,
+    },
+    keyRules: [{ providerId: "openai", keyId: "openai__primary", scope: "all" }],
+  };
+
+  db.setSetting("routing_config", value);
+  assert.deepEqual(db.getSetting("routing_config", null), value);
+  assert.equal(db.deleteSetting("routing_config"), true);
+  assert.equal(db.getSetting("routing_config", null), null);
+});
+
 test("database can fail orphaned running jobs after restart", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-station-"));
   const db = createDatabase(path.join(tempDir, "app.db"));

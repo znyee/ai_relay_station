@@ -29,9 +29,14 @@ await ensureDir(config.dataDir);
 await ensureDir(config.workspaceRoot);
 await ensureDir(config.runsRoot);
 await ensureDir(config.uploadsRoot);
+const ROUTING_CONFIG_SETTING_KEY = "routing_config";
 
 const db = createDatabase(config.databasePath);
 const chatService = createChatService(config);
+const savedRoutingConfig = db.getSetting(ROUTING_CONFIG_SETTING_KEY, null);
+if (savedRoutingConfig) {
+  chatService.setRoutingConfig(savedRoutingConfig);
+}
 const jobQueue = createJobQueue({ config, db });
 db.failRunningJobs("Relay Station restarted before the job finished.");
 
@@ -606,6 +611,25 @@ app.get("/api/admin/overview", requireAuth, async (req, res) => {
     authEvents: isAdmin ? db.listAuthAuditEvents(100) : [],
     apiKeys,
     dispatchEvents: dispatchEvents.map((event) => serializeDispatchEventForViewer(event, req.user)),
+    autoRouting: chatService.describeAutoRouting(),
+    routingConfig: isAdmin ? chatService.getRoutingConfig() : null,
+  });
+});
+
+app.put("/api/admin/routing-config", requireAdmin, async (req, res) => {
+  const routingConfig = chatService.setRoutingConfig(req.body);
+  db.setSetting(ROUTING_CONFIG_SETTING_KEY, routingConfig);
+  res.json({
+    routingConfig,
+    autoRouting: chatService.describeAutoRouting(),
+  });
+});
+
+app.delete("/api/admin/routing-config", requireAdmin, async (_req, res) => {
+  db.deleteSetting(ROUTING_CONFIG_SETTING_KEY);
+  const routingConfig = chatService.setRoutingConfig({});
+  res.json({
+    routingConfig,
     autoRouting: chatService.describeAutoRouting(),
   });
 });

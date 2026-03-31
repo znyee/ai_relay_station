@@ -531,6 +531,285 @@ test("single provider can fail over across weighted API keys and expose admin te
   assert.equal(service.listDispatchEvents(10)[0].status, "success");
 });
 
+test("runtime routing config can reprioritize auto routes", async (t) => {
+  const originalFetch = global.fetch;
+  const calls = [];
+
+  global.fetch = async (url, options) => {
+    const body = JSON.parse(String(options.body || "{}"));
+    calls.push({ url, model: body.model });
+    const providerLabel = url.includes("bailian") ? "bailian" : "siliconflow";
+    return new Response(
+      JSON.stringify({
+        id: "resp_auto_override",
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: `reply from ${providerLabel}`,
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  };
+
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const service = createChatService({
+    chatProviders: [
+      {
+        id: "auto",
+        label: "Auto",
+        endpoint: "",
+        apiKey: "",
+        models: ["auto"],
+        defaultModel: "auto",
+        headers: {},
+        body: {},
+        isVirtual: true,
+        autoRoutes: {
+          text: [
+            { providerId: "siliconflow", model: "deepseek-ai/DeepSeek-R1", priority: 150, weight: 1 },
+            { providerId: "alibaba_bailian", model: "qwen-plus-2025-12-01", priority: 50, weight: 1 },
+          ],
+          vision: [],
+        },
+      },
+      {
+        id: "siliconflow",
+        label: "SiliconFlow",
+        endpoint: "https://siliconflow.invalid/chat",
+        models: ["deepseek-ai/DeepSeek-R1"],
+        defaultModel: "deepseek-ai/DeepSeek-R1",
+        headers: {},
+        body: {},
+        keys: [
+          {
+            id: "siliconflow__primary",
+            providerId: "siliconflow",
+            providerLabel: "SiliconFlow",
+            keyName: "primary",
+            apiKey: "sf-key-1",
+            maskedKey: "sf-k…ey-1",
+            endpoint: "https://siliconflow.invalid/chat",
+            models: ["deepseek-ai/DeepSeek-R1"],
+            defaultModel: "deepseek-ai/DeepSeek-R1",
+            priority: 100,
+            weight: 1,
+            enabled: true,
+            sourceEnv: "SILICONFLOW_API_KEYS",
+          },
+        ],
+      },
+      {
+        id: "alibaba_bailian",
+        label: "Alibaba Bailian",
+        endpoint: "https://bailian.invalid/chat",
+        models: ["qwen-plus-2025-12-01"],
+        defaultModel: "qwen-plus-2025-12-01",
+        headers: {},
+        body: {},
+        keys: [
+          {
+            id: "alibaba_bailian__primary",
+            providerId: "alibaba_bailian",
+            providerLabel: "Alibaba Bailian",
+            keyName: "primary",
+            apiKey: "ali-key-1",
+            maskedKey: "ali-…ey-1",
+            endpoint: "https://bailian.invalid/chat",
+            models: ["qwen-plus-2025-12-01"],
+            defaultModel: "qwen-plus-2025-12-01",
+            priority: 100,
+            weight: 1,
+            enabled: true,
+            sourceEnv: "ALIBABA_BAILIAN_API_KEYS",
+          },
+        ],
+      },
+    ],
+    defaultChatProviderId: "auto",
+    chatAttachmentTextBytes: 4096,
+    chatInlineImageBytes: 4096,
+    autoChatRetryCooldownMs: 60_000,
+    autoChatQuotaCooldownMs: 300_000,
+  });
+
+  service.setRoutingConfig({
+    routeOverrides: [
+      {
+        routeType: "text",
+        providerId: "alibaba_bailian",
+        model: "qwen-plus-2025-12-01",
+        priority: 250,
+        weight: 1,
+        enabled: true,
+      },
+    ],
+  });
+
+  const reply = await service.respond({
+    user: {
+      display_name: "user1",
+      username: "user1",
+      repo_url: "",
+      repo_local_path: "",
+    },
+    history: [
+      {
+        role: "user",
+        content: "hello",
+        attachments: [],
+      },
+    ],
+    providerId: "auto",
+    model: "auto",
+  });
+
+  assert.equal(reply.providerId, "alibaba_bailian");
+  assert.equal(calls[0].model, "qwen-plus-2025-12-01");
+  assert.equal(
+    service.describeAutoRouting().routes.text.find((route) => route.providerId === "alibaba_bailian").priority,
+    250,
+  );
+});
+
+test("runtime routing config can prefer one key for all models and another for a specific model", async (t) => {
+  const originalFetch = global.fetch;
+  const authorizationHeaders = [];
+
+  global.fetch = async (_url, options) => {
+    authorizationHeaders.push(options.headers.authorization);
+    return new Response(
+      JSON.stringify({
+        id: "resp_key_rule",
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: "OK",
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  };
+
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const service = createChatService({
+    chatProviders: [
+      {
+        id: "siliconflow",
+        label: "SiliconFlow",
+        endpoint: "https://siliconflow.invalid/chat",
+        models: ["model-a", "model-b"],
+        defaultModel: "model-a",
+        headers: {},
+        body: {},
+        keys: [
+          {
+            id: "siliconflow__primary",
+            providerId: "siliconflow",
+            providerLabel: "SiliconFlow",
+            keyName: "primary",
+            apiKey: "sf-key-1",
+            maskedKey: "sf-k…ey-1",
+            endpoint: "https://siliconflow.invalid/chat",
+            models: ["model-a", "model-b"],
+            defaultModel: "model-a",
+            priority: 100,
+            weight: 1,
+            enabled: true,
+            sourceEnv: "SILICONFLOW_API_KEYS",
+          },
+          {
+            id: "siliconflow__backup",
+            providerId: "siliconflow",
+            providerLabel: "SiliconFlow",
+            keyName: "backup",
+            apiKey: "sf-key-2",
+            maskedKey: "sf-k…ey-2",
+            endpoint: "https://siliconflow.invalid/chat",
+            models: ["model-a", "model-b"],
+            defaultModel: "model-a",
+            priority: 80,
+            weight: 1,
+            enabled: true,
+            sourceEnv: "SILICONFLOW_API_KEYS",
+          },
+        ],
+      },
+    ],
+    defaultChatProviderId: "siliconflow",
+    chatAttachmentTextBytes: 4096,
+    chatInlineImageBytes: 4096,
+    autoChatRetryCooldownMs: 60_000,
+    autoChatQuotaCooldownMs: 300_000,
+  });
+
+  service.setRoutingConfig({
+    keyRules: [
+      {
+        providerId: "siliconflow",
+        keyId: "siliconflow__backup",
+        scope: "all",
+        priority: 260,
+        weight: 1,
+        enabled: true,
+      },
+      {
+        providerId: "siliconflow",
+        keyId: "siliconflow__primary",
+        scope: "model",
+        model: "model-b",
+        priority: 320,
+        weight: 1,
+        enabled: true,
+      },
+    ],
+  });
+
+  await service.respond({
+    user: {
+      display_name: "user1",
+      username: "user1",
+      repo_url: "",
+      repo_local_path: "",
+    },
+    history: [{ role: "user", content: "hello", attachments: [] }],
+    providerId: "siliconflow",
+    model: "model-a",
+  });
+
+  await service.respond({
+    user: {
+      display_name: "user1",
+      username: "user1",
+      repo_url: "",
+      repo_local_path: "",
+    },
+    history: [{ role: "user", content: "hello", attachments: [] }],
+    providerId: "siliconflow",
+    model: "model-b",
+  });
+
+  assert.deepEqual(authorizationHeaders, ["Bearer sf-key-2", "Bearer sf-key-1"]);
+});
+
 test("keyless relay provider can call an upstream without bearer auth", async (t) => {
   const originalFetch = global.fetch;
   const captured = [];

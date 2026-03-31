@@ -137,6 +137,12 @@ export function createDatabase(databasePath) {
       finished_at TEXT,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   ensureColumn(db, "users", "can_use_code", "INTEGER NOT NULL DEFAULT 0");
@@ -368,6 +374,15 @@ export function createDatabase(databasePath) {
         finished_at = @finished_at
       WHERE status = 'running'
     `),
+    getSetting: db.prepare(`SELECT value_json FROM app_settings WHERE key = ?`),
+    upsertSetting: db.prepare(`
+      INSERT INTO app_settings (key, value_json, updated_at)
+      VALUES (@key, @value_json, @updated_at)
+      ON CONFLICT(key) DO UPDATE SET
+        value_json = excluded.value_json,
+        updated_at = excluded.updated_at
+    `),
+    deleteSetting: db.prepare(`DELETE FROM app_settings WHERE key = ?`),
   };
 
   return {
@@ -673,6 +688,27 @@ export function createDatabase(databasePath) {
         error_text: errorText,
         finished_at: nowIso(),
       });
+    },
+
+    getSetting(key, fallback = null) {
+      const row = statements.getSetting.get(String(key || ""));
+      if (!row) {
+        return fallback;
+      }
+      return safeJsonParse(row.value_json, fallback);
+    },
+
+    setSetting(key, value) {
+      statements.upsertSetting.run({
+        key: String(key || ""),
+        value_json: JSON.stringify(value),
+        updated_at: nowIso(),
+      });
+      return this.getSetting(key, null);
+    },
+
+    deleteSetting(key) {
+      return statements.deleteSetting.run(String(key || "")).changes > 0;
     },
   };
 }

@@ -7,44 +7,26 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="app-shell">
+    <div id="app-shell" class="app-shell booting">
+      <section id="boot-screen" class="boot-screen">
+        <div class="boot-card">
+          <p class="eyebrow">Relay Station</p>
+          <strong>Loading</strong>
+        </div>
+      </section>
+
       <section id="login-screen" class="login-screen">
         <div class="login-card">
           <div class="login-copy">
             <p class="eyebrow">Relay Station</p>
-            <h1>Your private AI workspace.</h1>
-            <p class="lede">
-              Chat runs as independent sessions. Code runs in isolated workspaces. A repository can record outputs, but it does not define the logic.
-            </p>
-            <div class="login-highlights">
-              <div class="highlight-pill">Chat</div>
-              <div class="highlight-pill">Code</div>
-              <div class="highlight-pill">Control</div>
-            </div>
-            <div class="login-stats">
-              <article class="login-stat">
-                <span>Context</span>
-                <strong>Per-chat memory</strong>
-                <p>Every conversation stays isolated, so planning and execution do not leak into each other.</p>
-              </article>
-              <article class="login-stat">
-                <span>Execution</span>
-                <strong>Queued code work</strong>
-                <p>Code jobs run in fresh workspaces with logs, artifacts, and a predictable queue.</p>
-              </article>
-              <article class="login-stat">
-                <span>Control</span>
-                <strong>Live API visibility</strong>
-                <p>All users can inspect routing health. Root sees accounts, roles, and conversation history.</p>
-              </article>
-            </div>
+            <h1>Chat. Code. Control.</h1>
+            <p class="lede">Private multi-user AI relay.</p>
           </div>
 
           <div class="login-form-shell">
             <p class="eyebrow">Access</p>
             <div class="login-panel-intro">
-              <h2>Enter quietly.</h2>
-              <p class="panel-note">Registration only asks for a username, a password, and one confirmation step.</p>
+              <h2 id="login-panel-title">Enter</h2>
             </div>
             <div id="auth-mode-toggle" class="mode-toggle auth-mode-toggle">
               <button type="button" class="mode-button active" data-auth-mode="login">Login</button>
@@ -65,7 +47,6 @@
               </label>
               <button id="login-submit-button" type="submit">Enter Station</button>
             </form>
-            <p id="login-helper" class="panel-note">Use an existing account to sign in. New users can register directly.</p>
             <p id="login-error" class="error-text"></p>
           </div>
         </div>
@@ -76,7 +57,6 @@
           <div class="brand-block">
             <p class="eyebrow">Relay Station</p>
             <h2 id="user-name">User</h2>
-            <p class="brand-note">Private chat, queue-backed code jobs, and live routing control in one quiet workspace.</p>
           </div>
 
           <div id="app-mode-toggle" class="mode-toggle app-mode-toggle">
@@ -110,7 +90,6 @@
               <div class="panel-header">
                 <div class="chat-header-title">
                   <h3 id="chat-title">Select or create a conversation</h3>
-                  <p class="panel-note">Keep each chat isolated while switching providers and models in place.</p>
                   <div id="chat-conversation-actions" class="conversation-actions hidden">
                     <button id="chat-pin-button" type="button" class="ghost-button compact-button">Pin</button>
                     <button id="chat-delete-button" type="button" class="ghost-button compact-button danger-button">Delete</button>
@@ -128,7 +107,7 @@
                 </div>
               </div>
               <div id="chat-messages" class="message-stream empty-state">
-                Start a new chat. Each chat window keeps its own context.
+                Start a chat.
               </div>
               <form id="chat-form" class="composer">
                 <textarea id="chat-input" rows="4" placeholder="Ask a question or plan the next change..."></textarea>
@@ -148,7 +127,6 @@
                 <div class="panel-header">
                   <div class="chat-header-title">
                     <h3>Queue a code job</h3>
-                    <p class="panel-note">Describe the work, attach context, and inspect logs and output artifacts as the queue advances.</p>
                   </div>
                 </div>
                 <form id="code-form" class="composer code-composer">
@@ -173,7 +151,7 @@
                   </div>
                 </div>
                 <div id="job-detail" class="job-detail empty-state">
-                  Pick a job on the left to inspect status, summary, output files, and logs.
+                  Select a job.
                 </div>
               </div>
             </div>
@@ -184,8 +162,7 @@
               <div class="panel hero-panel">
                 <div class="panel-header">
                   <div class="chat-header-title">
-                    <h3>AI API Key Control</h3>
-                    <p class="panel-note">Root can inspect health, cooldowns, weighted routing, and current failover state.</p>
+                    <h3>AI Control</h3>
                   </div>
                   <button id="admin-refresh-button" type="button" class="ghost-button compact-button">Refresh</button>
                 </div>
@@ -206,6 +183,38 @@
                       <tbody id="admin-users-table"></tbody>
                     </table>
                   </div>
+                </div>
+
+                <div id="admin-dispatch-settings-section" class="admin-section hidden">
+                  <div class="admin-section-header">
+                    <h4>Dispatch Settings</h4>
+                    <button id="admin-routing-reset-button" type="button" class="ghost-button compact-button">Reset</button>
+                  </div>
+                  <form id="admin-dispatch-form" class="admin-form-grid">
+                    <label>
+                      <span>Retry Cooldown (ms)</span>
+                      <input id="admin-retry-cooldown-input" name="retryCooldownMs" type="number" min="0" step="1000" required />
+                    </label>
+                    <label>
+                      <span>Quota Cooldown (ms)</span>
+                      <input id="admin-quota-cooldown-input" name="quotaCooldownMs" type="number" min="0" step="1000" required />
+                    </label>
+                    <label>
+                      <span>Breaker Threshold</span>
+                      <input id="admin-breaker-threshold-input" name="circuitBreakerThreshold" type="number" min="1" step="1" required />
+                    </label>
+                    <label>
+                      <span>Breaker Cooldown (ms)</span>
+                      <input id="admin-breaker-cooldown-input" name="circuitBreakerMs" type="number" min="0" step="1000" required />
+                    </label>
+                    <label>
+                      <span>History Limit</span>
+                      <input id="admin-history-limit-input" name="dispatchHistoryLimit" type="number" min="50" step="10" required />
+                    </label>
+                    <div class="admin-form-actions">
+                      <button type="submit">Save Dispatch</button>
+                    </div>
+                  </form>
                 </div>
 
                 <div class="admin-section">
@@ -251,7 +260,10 @@
                 </div>
 
                 <div class="admin-section">
-                  <h4>Auto Routing</h4>
+                  <div class="admin-section-header">
+                    <h4>Auto Routing</h4>
+                    <button id="admin-auto-routing-save-button" type="button" class="ghost-button compact-button hidden">Save</button>
+                  </div>
                   <div class="table-wrap">
                     <table class="data-table">
                       <thead>
@@ -259,6 +271,7 @@
                           <th>Type</th>
                           <th>Provider</th>
                           <th>Model</th>
+                          <th>Enabled</th>
                           <th>Priority</th>
                           <th>Weight</th>
                           <th>Cooldown</th>
@@ -268,13 +281,69 @@
                     </table>
                   </div>
                 </div>
+
+                <div id="admin-key-rules-section" class="admin-section hidden">
+                  <h4>Key Priority Rules</h4>
+                  <form id="admin-key-rule-form" class="admin-form-grid admin-form-grid-tight">
+                    <label>
+                      <span>Provider</span>
+                      <select id="admin-key-rule-provider-select" name="providerId"></select>
+                    </label>
+                    <label>
+                      <span>Key</span>
+                      <select id="admin-key-rule-key-select" name="keyId"></select>
+                    </label>
+                    <label>
+                      <span>Scope</span>
+                      <select id="admin-key-rule-scope-select" name="scope">
+                        <option value="all">All Models</option>
+                        <option value="model">One Model</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Model</span>
+                      <select id="admin-key-rule-model-select" name="model"></select>
+                    </label>
+                    <label>
+                      <span>Priority</span>
+                      <input id="admin-key-rule-priority-input" name="priority" type="number" step="1" required />
+                    </label>
+                    <label>
+                      <span>Weight</span>
+                      <input id="admin-key-rule-weight-input" name="weight" type="number" min="1" step="1" required />
+                    </label>
+                    <label class="checkbox-field">
+                      <span>Enabled</span>
+                      <input id="admin-key-rule-enabled-input" name="enabled" type="checkbox" checked />
+                    </label>
+                    <div class="admin-form-actions">
+                      <button type="submit">Save Rule</button>
+                    </div>
+                  </form>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>Provider</th>
+                          <th>Key</th>
+                          <th>Scope</th>
+                          <th>Model</th>
+                          <th>Enabled</th>
+                          <th>Priority</th>
+                          <th>Weight</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody id="admin-key-rules-table"></tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
 
               <div class="panel hero-panel">
                 <div class="panel-header">
                   <div class="chat-header-title">
                     <h3>Dispatch Timeline</h3>
-                    <p class="panel-note">Recent API scheduling attempts, provider failovers, and authentication audit events.</p>
                   </div>
                 </div>
 
@@ -302,7 +371,7 @@
                 <div id="admin-user-records-section" class="admin-section hidden">
                   <h4 id="admin-user-records-title">User Conversations</h4>
                   <div id="admin-user-conversations" class="admin-user-records empty-state">
-                    Select a user from the management table to inspect all of their chat records.
+                    Select a user.
                   </div>
                 </div>
 

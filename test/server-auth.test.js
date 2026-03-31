@@ -14,7 +14,7 @@ function randomPort() {
   return 40000 + Math.floor(Math.random() * 10000);
 }
 
-async function startServer() {
+async function startServer(extraEnv = {}) {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-station-server-"));
   const port = randomPort();
   const child = spawn("node", ["src/server.js"], {
@@ -34,6 +34,7 @@ async function startServer() {
       ROOT_ADMIN_DISPLAY_NAME: "Root Admin",
       CHAT_DEFAULT_PROVIDER: "",
       BOOTSTRAP_PASSWORD: "",
+      ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -219,4 +220,98 @@ test("root can manage users and inspect their conversation history", async (t) =
     }),
   });
   assert.equal(reloginResponse.status, 200);
+});
+
+test("root can persist and reset routing configuration", async (t) => {
+  const server = await startServer({
+    SILICONFLOW_API_KEYS: "primary|sf-key-1|priority=100|weight=1",
+    SILICONFLOW_CHAT_MODELS: "deepseek-ai/DeepSeek-R1",
+    ALIBABA_BAILIAN_API_KEYS: "primary|ali-key-1|priority=100|weight=1",
+    ALIBABA_BAILIAN_CHAT_MODELS: "qwen-plus-2025-12-01",
+    AUTO_CHAT_TEXT_ROUTE:
+      "siliconflow:deepseek-ai/DeepSeek-R1|priority=150|weight=1,alibaba_bailian:qwen-plus-2025-12-01|priority=50|weight=1",
+    AUTO_CHAT_VISION_ROUTE: "siliconflow:deepseek-ai/DeepSeek-R1|priority=120|weight=1",
+  });
+  t.after(async () => {
+    await stopServer(server.child);
+  });
+
+  const rootLogin = await fetch(`${server.baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      username: "root",
+      password: "123456",
+    }),
+  });
+  assert.equal(rootLogin.status, 200);
+  const rootCookie = sessionCookie(rootLogin);
+
+  const saveResponse = await fetch(`${server.baseUrl}/api/admin/routing-config`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      cookie: rootCookie,
+    },
+    body: JSON.stringify({
+      dispatch: {
+        retryCooldownMs: 11_000,
+        quotaCooldownMs: 22_000,
+        circuitBreakerThreshold: 4,
+        circuitBreakerMs: 33_000,
+        dispatchHistoryLimit: 120,
+      },
+      routeOverrides: [
+        {
+          routeType: "text",
+          providerId: "alibaba_bailian",
+          model: "qwen-plus-2025-12-01",
+          priority: 260,
+          weight: 2,
+          enabled: true,
+        },
+      ],
+      keyRules: [
+        {
+          providerId: "siliconflow",
+          keyId: "siliconflow__primary",
+          scope: "all",
+          priority: 180,
+          weight: 3,
+          enabled: true,
+        },
+      ],
+    }),
+  });
+  assert.equal(saveResponse.status, 200);
+  const savePayload = await saveResponse.json();
+  assert.equal(savePayload.routingConfig.dispatch.retryCooldownMs, 11_000);
+  assert.equal(savePayload.routingConfig.routeOverrides[0].priority, 260);
+  assert.equal(savePayload.routingConfig.keyRules[0].priority, 180);
+
+  const overviewResponse = await fetch(`${server.baseUrl}/api/admin/overview`, {
+    headers: {
+      cookie: rootCookie,
+    },
+  });
+  assert.equal(overviewResponse.status, 200);
+  const overviewPayload = await overviewResponse.json();
+  assert.equal(overviewPayload.routingConfig.dispatch.quotaCooldownMs, 22_000);
+  assert.equal(
+    overviewPayload.autoRouting.routes.text.find((route) => route.providerId === "alibaba_bailian").priority,
+    260,
+  );
+
+  const resetResponse = await fetch(`${server.baseUrl}/api/admin/routing-config`, {
+    method: "DELETE",
+    headers: {
+      cookie: rootCookie,
+    },
+  });
+  assert.equal(resetResponse.status, 200);
+  const resetPayload = await resetResponse.json();
+  assert.deepEqual(resetPayload.routingConfig.routeOverrides, []);
+  assert.deepEqual(resetPayload.routingConfig.keyRules, []);
 });

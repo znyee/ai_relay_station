@@ -280,7 +280,7 @@ export function shouldAutoFailover(error) {
 }
 
 function routeKey(route) {
-  return `${route.providerId}:${route.model}`;
+  return route.id || `${route.routeType || "route"}:${route.providerId}:${route.model}`;
 }
 
 function cooldownDurationMs(error, config) {
@@ -439,6 +439,43 @@ function createEmptyKeyState() {
   };
 }
 
+function normalizePriority(value, fallback = 100) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeWeight(value, fallback = 1) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(1, parsed);
+}
+
+function normalizeDurationMs(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(0, parsed);
+}
+
+function normalizeThreshold(value, fallback = 3) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return Math.max(1, fallback);
+  }
+  return Math.max(1, Math.round(parsed));
+}
+
+function routeId(routeType, providerId, model) {
+  return `${routeType}:${providerId}:${model}`;
+}
+
+function keyRuleId(providerId, keyId, scope, model = "") {
+  return `${providerId}:${keyId}:${scope}:${model || "*"}`;
+}
+
 export function createChatService(config) {
   const normalizedProviders = (config.chatProviders || []).map((provider) => {
     if (provider.isVirtual || (provider.keys && provider.keys.length > 0)) {
@@ -477,11 +514,157 @@ export function createChatService(config) {
   const routeCooldowns = new Map();
   const apiKeyStates = new Map();
   const dispatchEvents = [];
+  const providerKeys = normalizedProviders.flatMap((provider) => provider.keys || []);
+  const providerKeysById = new Map(providerKeys.map((apiKey) => [apiKey.id, apiKey]));
+  const baseAutoRoutes = normalizedProviders.flatMap((provider) =>
+    Object.entries(provider.autoRoutes || {}).flatMap(([routeType, routes]) =>
+      (routes || []).map((route) => ({
+        id: routeId(routeType, route.providerId, route.model),
+        routeType,
+        providerId: route.providerId,
+        model: route.model,
+        priority: normalizePriority(route.priority, 100),
+        weight: normalizeWeight(route.weight, 1),
+      })),
+    ),
+  );
+  const baseAutoRoutesById = new Map(baseAutoRoutes.map((route) => [route.id, route]));
+  let routingConfig = null;
+  let routeOverridesById = new Map();
+  let keyRulesById = new Map();
+  let keyRuleCounts = new Map();
 
-  for (const provider of normalizedProviders) {
-    for (const apiKey of provider.keys || []) {
-      apiKeyStates.set(apiKey.id, createEmptyKeyState());
+  for (const apiKey of providerKeys) {
+    apiKeyStates.set(apiKey.id, createEmptyKeyState());
+  }
+
+  function cloneValue(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function defaultDispatchSettings() {
+    return {
+      retryCooldownMs: normalizeDurationMs(config.autoChatRetryCooldownMs, 2 * 60 * 1000),
+      quotaCooldownMs: normalizeDurationMs(config.autoChatQuotaCooldownMs, 15 * 60 * 1000),
+      circuitBreakerThreshold: normalizeThreshold(config.autoChatCircuitBreakerThreshold, 3),
+      circuitBreakerMs: normalizeDurationMs(config.autoChatCircuitBreakerMs, 10 * 60 * 1000),
+      dispatchHistoryLimit: Math.max(50, normalizeThreshold(config.adminDispatchHistoryLimit, 200)),
+    };
+  }
+
+  function normalizeRoutingConfig(input = {}) {
+    const raw = input && typeof input === "object" ? input : {};
+    const dispatch = {
+      retryCooldownMs: normalizeDurationMs(raw.dispatch?.retryCooldownMs, defaultDispatchSettings().retryCooldownMs),
+      quotaCooldownMs: normalizeDurationMs(raw.dispatch?.quotaCooldownMs, defaultDispatchSettings().quotaCooldownMs),
+      circuitBreakerThreshold: normalizeThreshold(
+        raw.dispatch?.circuitBreakerThreshold,
+        defaultDispatchSettings().circuitBreakerThreshold,
+      ),
+      circuitBreakerMs: normalizeDurationMs(raw.dispatch?.circuitBreakerMs, defaultDispatchSettings().circuitBreakerMs),
+      dispatchHistoryLimit: Math.max(
+        50,
+        normalizeThreshold(raw.dispatch?.dispatchHistoryLimit, defaultDispatchSettings().dispatchHistoryLimit),
+      ),
+    };
+
+    const routeOverrides = [];
+    const seenRouteIds = new Set();
+    for (const entry of Array.isArray(raw.routeOverrides) ? raw.routeOverrides : []) {
+      const routeType = String(entry?.routeType || "").trim();
+      const providerId = String(entry?.providerId || "").trim();
+      const model = String(entry?.model || "").trim();
+      const id = routeId(routeType, providerId, model);
+      const baseRoute = baseAutoRoutesById.get(id);
+      if (!baseRoute || seenRouteIds.has(id)) {
+        continue;
+      }
+      seenRouteIds.add(id);
+      routeOverrides.push({
+        id,
+        routeType,
+        providerId,
+        model,
+        enabled: entry?.enabled !== false,
+        priority: normalizePriority(entry?.priority, baseRoute.priority),
+        weight: normalizeWeight(entry?.weight, baseRoute.weight),
+      });
     }
+
+    const keyRules = [];
+    const seenKeyRuleIds = new Set();
+    for (const entry of Array.isArray(raw.keyRules) ? raw.keyRules : []) {
+      const providerId = String(entry?.providerId || "").trim();
+      const keyId = String(entry?.keyId || "").trim();
+      const apiKey = providerKeysById.get(keyId);
+      if (!apiKey || apiKey.providerId !== providerId) {
+        continue;
+      }
+
+      const scope = String(entry?.scope || "all").trim() === "model" ? "model" : "all";
+      const model = scope === "model" ? String(entry?.model || "").trim() : "";
+      if (scope === "model" && (!model || !apiKey.models.includes(model))) {
+        continue;
+      }
+
+      const id = keyRuleId(providerId, keyId, scope, model);
+      if (seenKeyRuleIds.has(id)) {
+        continue;
+      }
+      seenKeyRuleIds.add(id);
+      keyRules.push({
+        id,
+        providerId,
+        keyId,
+        scope,
+        model,
+        enabled: entry?.enabled !== false,
+        priority: normalizePriority(entry?.priority, apiKey.priority),
+        weight: normalizeWeight(entry?.weight, apiKey.weight),
+      });
+    }
+
+    routeOverrides.sort((left, right) =>
+      `${left.routeType}:${left.providerId}:${left.model}`.localeCompare(
+        `${right.routeType}:${right.providerId}:${right.model}`,
+      ),
+    );
+    keyRules.sort((left, right) =>
+      `${left.providerId}:${left.keyId}:${left.scope}:${left.model}`.localeCompare(
+        `${right.providerId}:${right.keyId}:${right.scope}:${right.model}`,
+      ),
+    );
+
+    return {
+      dispatch,
+      routeOverrides,
+      keyRules,
+    };
+  }
+
+  function trimDispatchHistory() {
+    const limit = Math.max(50, Number(routingConfig?.dispatch?.dispatchHistoryLimit || config.adminDispatchHistoryLimit || 200));
+    if (dispatchEvents.length > limit) {
+      dispatchEvents.length = limit;
+    }
+  }
+
+  function applyRoutingConfig(input = {}) {
+    routingConfig = normalizeRoutingConfig(input);
+    routeOverridesById = new Map(routingConfig.routeOverrides.map((entry) => [entry.id, entry]));
+    keyRulesById = new Map(routingConfig.keyRules.map((entry) => [entry.id, entry]));
+    keyRuleCounts = new Map();
+    for (const rule of routingConfig.keyRules) {
+      keyRuleCounts.set(rule.keyId, (keyRuleCounts.get(rule.keyId) || 0) + 1);
+    }
+    trimDispatchHistory();
+    return cloneValue(routingConfig);
+  }
+
+  applyRoutingConfig();
+
+  function dispatchSettings() {
+    return routingConfig.dispatch;
   }
 
   function getKeyState(apiKey) {
@@ -491,24 +674,76 @@ export function createChatService(config) {
     return apiKeyStates.get(apiKey.id);
   }
 
+  function effectiveKeyConfig(apiKey, model = "") {
+    const allRule = keyRulesById.get(keyRuleId(apiKey.providerId, apiKey.id, "all", ""));
+    const modelRule = model ? keyRulesById.get(keyRuleId(apiKey.providerId, apiKey.id, "model", model)) : null;
+    const appliedRule = modelRule || allRule || null;
+    return {
+      enabled: appliedRule ? appliedRule.enabled : apiKey.enabled,
+      priority: appliedRule ? appliedRule.priority : apiKey.priority,
+      weight: appliedRule ? appliedRule.weight : apiKey.weight,
+      baseEnabled: apiKey.enabled,
+      basePriority: apiKey.priority,
+      baseWeight: apiKey.weight,
+      ruleId: appliedRule?.id || "",
+      ruleScope: appliedRule?.scope || "",
+      ruleModel: appliedRule?.model || "",
+      ruleCount: keyRuleCounts.get(apiKey.id) || 0,
+    };
+  }
+
+  function providerHasEnabledKey(providerId, model) {
+    const provider = providers.get(providerId);
+    if (!provider) {
+      return false;
+    }
+    return (provider.keys || []).some((apiKey) => {
+      if (!Array.isArray(apiKey.models) || !apiKey.models.includes(model)) {
+        return false;
+      }
+      return effectiveKeyConfig(apiKey, model).enabled;
+    });
+  }
+
+  function effectiveRouteConfig(routeType, route) {
+    const id = routeId(routeType, route.providerId, route.model);
+    const override = routeOverridesById.get(id);
+    return {
+      id,
+      routeType,
+      providerId: route.providerId,
+      model: route.model,
+      enabled: override ? override.enabled : true,
+      priority: override ? override.priority : normalizePriority(route.priority, 100),
+      weight: override ? override.weight : normalizeWeight(route.weight, 1),
+      baseEnabled: true,
+      basePriority: normalizePriority(route.priority, 100),
+      baseWeight: normalizeWeight(route.weight, 1),
+    };
+  }
+
   function computeCooldownMs(error, state) {
-    const baseCooldown = cooldownDurationMs(error, config);
+    const settings = dispatchSettings();
+    const baseCooldown = cooldownDurationMs(error, {
+      autoChatRetryCooldownMs: settings.retryCooldownMs,
+      autoChatQuotaCooldownMs: settings.quotaCooldownMs,
+    });
     const nextConsecutiveFailures = Number(state.consecutiveFailures || 0) + 1;
-    const threshold = Math.max(1, Number(config.autoChatCircuitBreakerThreshold || 3));
+    const threshold = settings.circuitBreakerThreshold;
     if (nextConsecutiveFailures >= threshold) {
-      return Math.max(baseCooldown, Number(config.autoChatCircuitBreakerMs || 0));
+      return Math.max(baseCooldown, settings.circuitBreakerMs);
     }
     return baseCooldown;
   }
 
-  function apiKeyStatus(apiKey, state) {
-    if (!apiKey.enabled) {
+  function apiKeyStatus(keyConfig, state) {
+    if (!keyConfig.enabled) {
       return "disabled";
     }
     if ((state.cooldownUntil || 0) > Date.now()) {
       return "cooldown";
     }
-    if (state.consecutiveFailures >= Math.max(1, Number(config.autoChatCircuitBreakerThreshold || 3))) {
+    if (state.consecutiveFailures >= dispatchSettings().circuitBreakerThreshold) {
       return "degraded";
     }
     return "healthy";
@@ -516,9 +751,19 @@ export function createChatService(config) {
 
   function serializeApiKeyState(apiKey) {
     const state = getKeyState(apiKey);
+    const keyConfig = effectiveKeyConfig(apiKey);
     return {
       ...serializeAiApiKey(apiKey),
-      status: apiKeyStatus(apiKey, state),
+      enabled: keyConfig.enabled,
+      priority: keyConfig.priority,
+      weight: keyConfig.weight,
+      baseEnabled: keyConfig.baseEnabled,
+      basePriority: keyConfig.basePriority,
+      baseWeight: keyConfig.baseWeight,
+      ruleCount: keyConfig.ruleCount,
+      ruleScope: keyConfig.ruleScope,
+      ruleModel: keyConfig.ruleModel,
+      status: apiKeyStatus(keyConfig, state),
       successCount: state.successCount,
       failureCount: state.failureCount,
       quotaFailureCount: state.quotaFailureCount,
@@ -538,18 +783,16 @@ export function createChatService(config) {
       createdAt: nowIso(),
       ...event,
     });
-    if (dispatchEvents.length > Math.max(50, Number(config.adminDispatchHistoryLimit || 200))) {
-      dispatchEvents.length = Math.max(50, Number(config.adminDispatchHistoryLimit || 200));
-    }
+    trimDispatchHistory();
   }
 
-  function keyScore(apiKey, state) {
+  function keyScore(apiKey, state, keyConfig) {
     const cooldownPenalty = Math.max(0, ((state.cooldownUntil || 0) - Date.now()) / 1000);
     const loadPenalty = state.inFlight * 40;
     const failurePenalty = state.consecutiveFailures * 80;
     const latencyPenalty = Math.round((state.lastLatencyMs || 0) / 25);
-    const usagePenalty = state.successCount / Math.max(1, apiKey.weight);
-    return apiKey.priority * 1000 + apiKey.weight * 100 - cooldownPenalty - loadPenalty - failurePenalty - latencyPenalty - usagePenalty;
+    const usagePenalty = state.successCount / Math.max(1, keyConfig.weight);
+    return keyConfig.priority * 1000 + keyConfig.weight * 100 - cooldownPenalty - loadPenalty - failurePenalty - latencyPenalty - usagePenalty;
   }
 
   function routeScore(route) {
@@ -559,7 +802,15 @@ export function createChatService(config) {
     }
 
     const bestKeyScore = Math.max(
-      ...((provider.keys || []).map((apiKey) => keyScore(apiKey, getKeyState(apiKey)))),
+      ...((provider.keys || [])
+        .filter((apiKey) => Array.isArray(apiKey.models) && apiKey.models.includes(route.model))
+        .map((apiKey) => {
+          const keyConfig = effectiveKeyConfig(apiKey, route.model);
+          if (!keyConfig.enabled) {
+            return Number.NEGATIVE_INFINITY;
+          }
+          return keyScore(apiKey, getKeyState(apiKey), keyConfig);
+        })),
       0,
     );
     return route.priority * 1000 + route.weight * 100 + bestKeyScore / 1000;
@@ -642,28 +893,36 @@ export function createChatService(config) {
   }
 
   function orderProviderKeys(provider, model) {
-    const candidates = (provider.keys || []).filter(
-      (apiKey) => apiKey.enabled && Array.isArray(apiKey.models) && apiKey.models.includes(model),
-    );
+    const candidates = (provider.keys || [])
+      .filter((apiKey) => Array.isArray(apiKey.models) && apiKey.models.includes(model))
+      .map((apiKey) => ({
+        apiKey,
+        keyConfig: effectiveKeyConfig(apiKey, model),
+      }))
+      .filter((entry) => entry.keyConfig.enabled);
     if (candidates.length === 0) {
       throw new Error(`Provider "${provider.label}" has no enabled API key for model "${model}".`);
     }
 
     const now = Date.now();
-    const available = candidates.filter((apiKey) => (getKeyState(apiKey).cooldownUntil || 0) <= now);
+    const available = candidates.filter((entry) => (getKeyState(entry.apiKey).cooldownUntil || 0) <= now);
     const pool = available.length > 0 ? available : candidates;
     return [...pool].sort((left, right) => {
-      const scoreDelta = keyScore(right, getKeyState(right)) - keyScore(left, getKeyState(left));
+      const scoreDelta =
+        keyScore(right.apiKey, getKeyState(right.apiKey), right.keyConfig) -
+        keyScore(left.apiKey, getKeyState(left.apiKey), left.keyConfig);
       if (scoreDelta !== 0) {
         return scoreDelta;
       }
-      return left.keyName.localeCompare(right.keyName);
+      return left.apiKey.keyName.localeCompare(right.apiKey.keyName);
     });
   }
 
   function resolveAutoRoutes(provider, history) {
     const routeType = hasImageContext(history) ? "vision" : "text";
-    const routePlan = provider.autoRoutes?.[routeType] || [];
+    const routePlan = (provider.autoRoutes?.[routeType] || [])
+      .map((route) => effectiveRouteConfig(routeType, route))
+      .filter((route) => route.enabled && providerHasEnabledKey(route.providerId, route.model));
     if (routePlan.length === 0) {
       throw new Error(`Auto: no ${routeType} fallback route is configured.`);
     }
@@ -698,7 +957,9 @@ export function createChatService(config) {
     const orderedKeys = orderProviderKeys(provider, model);
     let lastError = null;
 
-    for (const [index, apiKey] of orderedKeys.entries()) {
+    for (const [index, candidate] of orderedKeys.entries()) {
+      const apiKey = candidate.apiKey;
+      const keyConfig = candidate.keyConfig;
       const state = getKeyState(apiKey);
       state.inFlight += 1;
       const attemptIndex = attemptCounter.value + 1;
@@ -727,8 +988,8 @@ export function createChatService(config) {
           apiKeyName: apiKey.keyName,
           model,
           attemptIndex,
-          keyPriority: apiKey.priority,
-          keyWeight: apiKey.weight,
+          keyPriority: keyConfig.priority,
+          keyWeight: keyConfig.weight,
           status: "success",
           durationMs,
           error: "",
@@ -766,8 +1027,8 @@ export function createChatService(config) {
           apiKeyName: apiKey.keyName,
           model,
           attemptIndex,
-          keyPriority: apiKey.priority,
-          keyWeight: apiKey.weight,
+          keyPriority: keyConfig.priority,
+          keyWeight: keyConfig.weight,
           status: "failed",
           durationMs: Date.now() - startedAt,
           error: error instanceof Error ? error.message : String(error),
@@ -812,7 +1073,10 @@ export function createChatService(config) {
       } catch (error) {
         lastError = error;
         const canFailOver = index < eligibleRoutes.length - 1 && shouldAutoFailover(error);
-        const cooldownMs = cooldownDurationMs(error, config);
+        const cooldownMs = cooldownDurationMs(error, {
+          autoChatRetryCooldownMs: dispatchSettings().retryCooldownMs,
+          autoChatQuotaCooldownMs: dispatchSettings().quotaCooldownMs,
+        });
         if (cooldownMs > 0) {
           routeCooldowns.set(routeKey(route), Date.now() + cooldownMs);
         }
@@ -855,15 +1119,21 @@ export function createChatService(config) {
     const routes = {};
     for (const [routeType, entries] of Object.entries(autoProvider.autoRoutes || {})) {
       routes[routeType] = entries.map((route) => {
-        const provider = providers.get(route.providerId);
+        const resolvedRoute = effectiveRouteConfig(routeType, route);
+        const provider = providers.get(resolvedRoute.providerId);
         return {
-          providerId: route.providerId,
-          providerLabel: provider?.label || route.providerId,
-          model: route.model,
-          priority: route.priority,
-          weight: route.weight,
-          cooldownUntil: routeCooldowns.get(routeKey(route))
-            ? new Date(routeCooldowns.get(routeKey(route))).toISOString()
+          routeId: resolvedRoute.id,
+          providerId: resolvedRoute.providerId,
+          providerLabel: provider?.label || resolvedRoute.providerId,
+          model: resolvedRoute.model,
+          enabled: resolvedRoute.enabled,
+          priority: resolvedRoute.priority,
+          weight: resolvedRoute.weight,
+          baseEnabled: resolvedRoute.baseEnabled,
+          basePriority: resolvedRoute.basePriority,
+          baseWeight: resolvedRoute.baseWeight,
+          cooldownUntil: routeCooldowns.get(routeKey(resolvedRoute))
+            ? new Date(routeCooldowns.get(routeKey(resolvedRoute))).toISOString()
             : "",
         };
       });
@@ -887,6 +1157,14 @@ export function createChatService(config) {
     listDispatchEvents,
 
     describeAutoRouting,
+
+    getRoutingConfig() {
+      return cloneValue(routingConfig);
+    },
+
+    setRoutingConfig(nextConfig) {
+      return applyRoutingConfig(nextConfig);
+    },
 
     defaultProviderId() {
       return config.defaultChatProviderId;
